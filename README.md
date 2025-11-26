@@ -123,23 +123,111 @@ Variables:
 - `lambda_architecture`: `arm64` or `x86_64` (default: `arm64`)
 - `function_name`: Lambda name (default: `hq`)
 
+### Manual Deployment with AWS CLI
+
+#### 1. Create IAM Role
+
+```sh
+# Create trust policy
+cat > /tmp/trust-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"Service": "lambda.amazonaws.com"},
+    "Action": "sts:AssumeRole"
+  }]
+}
+EOF
+
+# Create role
+aws iam create-role \
+  --role-name hq-lambda-role \
+  --assume-role-policy-document file:///tmp/trust-policy.json
+
+# Attach basic execution policy
+aws iam attach-role-policy \
+  --role-name hq-lambda-role \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+# Add S3 read permissions
+cat > /tmp/s3-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["s3:GetObject", "s3:ListBucket"],
+    "Resource": "*"
+  }]
+}
+EOF
+
+aws iam put-role-policy \
+  --role-name hq-lambda-role \
+  --policy-name s3-read-access \
+  --policy-document file:///tmp/s3-policy.json
+```
+
+#### 2. Create Lambda Function
+
+```sh
+# Get your AWS account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# Create function
+aws lambda create-function \
+  --function-name hq \
+  --runtime provided.al2023 \
+  --role arn:aws:iam::${ACCOUNT_ID}:role/hq-lambda-role \
+  --handler bootstrap \
+  --zip-file fileb://dist/lambda/lambda-arm64.zip \
+  --architectures arm64 \
+  --timeout 30 \
+  --memory-size 256 \
+  --environment Variables='{RUST_LOG=info}'
+```
+
+#### 3. Create Function URL
+
+```sh
+# Create public function URL
+aws lambda create-function-url-config \
+  --function-name hq \
+  --auth-type NONE \
+  --cors AllowOrigins="*",AllowMethods=GET,MaxAge=86400
+
+# Add public access permission
+aws lambda add-permission \
+  --function-name hq \
+  --statement-id FunctionURLAllowPublicAccess \
+  --action lambda:InvokeFunctionUrl \
+  --principal "*" \
+  --function-url-auth-type NONE
+```
+
+#### 4. Get Function URL
+
+```sh
+aws lambda get-function-url-config --function-name hq
+```
+
 ### Example Usage
 
+HTTP/HTTPS URLs:
 ```sh
 curl "https://YOUR_FUNCTION_URL?url=https://example.com&selector=title"
 ```
 
-### Manual Deployment
-
+S3 URLs (including public buckets like Common Crawl):
 ```sh
-aws lambda create-function \
-  --function-name hq \
-  --runtime provided.al2023 \
-  --role arn:aws:iam::ACCOUNT:role/lambda-role \
-  --handler bootstrap \
-  --zip-file fileb://dist/lambda/lambda-arm64.zip \
-  --architectures arm64
+# Extract title from S3-hosted HTML
+curl "https://YOUR_FUNCTION_URL?url=s3://bucket/path/file.html&selector=title"
+
+# Common Crawl example (note: large files may exceed Lambda response limits)
+curl "https://YOUR_FUNCTION_URL?url=s3://commoncrawl/crawl-data/CC-MAIN-2024-10/warc.paths.gz&selector=body&offset=0&length=50000"
 ```
+
+**Note:** Lambda responses are limited to 6MB. For large S3 files, use `offset` and `length` parameters to fetch partial content.
 
 ## Releases
 
