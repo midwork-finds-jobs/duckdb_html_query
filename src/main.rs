@@ -1,13 +1,8 @@
-mod link;
-mod pretty_print;
-
 use clap::Parser;
-use kuchikiki::NodeRef;
-use kuchikiki::traits::{NodeIterator, TendrilSink};
+use hq::{process_html, HqConfig};
 use std::error::Error;
 use std::fs::File;
-use std::io;
-use url::Url;
+use std::io::Read;
 
 #[derive(Debug, Clone, Parser)]
 #[command(version, author, about)]
@@ -52,102 +47,40 @@ struct Config {
     /// Output only the contents of the given attributes.
     #[arg(short, long)]
     attributes: Vec<String>,
-}
 
-fn select_attributes(node: &NodeRef, attributes: &[String], output: &mut dyn io::Write) {
-    if let Some(as_element) = node.as_element() {
-        for attr in attributes {
-            if let Ok(elem_atts) = as_element.attributes.try_borrow()
-                && let Some(val) = elem_atts.get(attr.as_str())
-            {
-                writeln!(output, "{val}").ok();
-            }
-        }
-    }
-}
-
-fn serialize_text(node: &NodeRef, ignore_whitespace: bool) -> String {
-    let mut result = String::new();
-    for text_node in node.inclusive_descendants().text_nodes() {
-        if ignore_whitespace && text_node.borrow().trim().is_empty() {
-            continue;
-        }
-
-        result.push_str(&text_node.borrow());
-
-        if ignore_whitespace {
-            result.push('\n');
-        }
-    }
-
-    result
+    /// Remove all whitespace from output.
+    #[arg(short, long)]
+    compact: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let config = Config::parse();
+    let cli_config = Config::parse();
 
-    let mut input: Box<dyn io::Read> = match config.input_path.as_ref() {
+    let mut input: Box<dyn Read> = match cli_config.input_path.as_ref() {
         "-" => Box::new(std::io::stdin()),
         f => Box::new(File::open(f).expect("should have opened input file")),
     };
 
-    let stdout = std::io::stdout();
-    let mut output: Box<dyn io::Write> = match config.output_path.as_ref() {
-        "-" => Box::new(stdout.lock()),
-        f => Box::new(File::create(f).expect("should have created output file")),
+    let mut html = String::new();
+    input.read_to_string(&mut html)?;
+
+    let hq_config = HqConfig {
+        selector: cli_config.selector,
+        base: cli_config.base,
+        detect_base: cli_config.detect_base,
+        text_only: cli_config.text_only,
+        ignore_whitespace: cli_config.ignore_whitespace,
+        pretty_print: cli_config.pretty_print,
+        remove_nodes: cli_config.remove_nodes,
+        attributes: cli_config.attributes,
+        compact: cli_config.compact,
     };
 
-    let document = kuchikiki::parse_html().from_utf8().read_from(&mut input)?;
+    let result = process_html(&html, &hq_config)?;
 
-    let base: Option<Url> = match (&config.base, &config.detect_base) {
-        (Some(base), true) => link::detect_base(&document).or(Url::parse(base).ok()),
-        (Some(base), false) => Url::parse(base).ok(),
-        (None, true) => link::detect_base(&document),
-        _ => None,
-    };
-
-    for node in document
-        .select(&config.selector)
-        .expect("Failed to parse CSS selector")
-    {
-        let node = node.as_node();
-
-        // detach those nodes that should be removed
-        if let Ok(targets) = node.select(&config.remove_nodes.join(",")) {
-            for target in targets {
-                target.as_node().detach();
-            }
-        }
-
-        if let Some(base) = &base {
-            link::rewrite_relative_url(node, base);
-        }
-
-        if !config.attributes.is_empty() {
-            select_attributes(node, &config.attributes, &mut output);
-            continue;
-        }
-
-        if config.text_only {
-            // let content = serialize_text(node, config.ignore_whitespace);
-            // output.write_all(format!("{}\n", content).as_ref()).ok();
-            writeln!(output, "{}", serialize_text(node, config.ignore_whitespace)).ok();
-            continue;
-        }
-
-        if config.pretty_print {
-            // let content = pretty_print::pretty_print(node);
-            // output.write_all(content.as_ref()).ok();
-            writeln!(output, "{}", pretty_print::pretty_print(node)).ok();
-            continue;
-        }
-
-        writeln!(output, "{}", node.to_string()).ok();
-        // let mut content: Vec<u8> = Vec::new();
-        // let Ok(_) = node.serialize(&mut content) else {
-        //     return
-        // };
-        // output.write_all(format!("{}\n", content).as_ref()).ok();
+    match cli_config.output_path.as_ref() {
+        "-" => print!("{}", result),
+        f => std::fs::write(f, result).expect("should have written output file"),
     }
 
     Ok(())

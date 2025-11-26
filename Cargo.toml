@@ -10,12 +10,37 @@ version = "0.5.0"
 authors = ["Michael Maclean <michael@mgdm.net>", "MultisampledNight"]
 edition = "2024"
 
+[[bin]]
+name = "hq"
+path = "src/main.rs"
+
+[[bin]]
+name = "lambda"
+path = "src/lambda.rs"
+required-features = ["lambda"]
+
 [dependencies]
 kuchikiki = "0.8"
 html5ever = "0.26.0"
 clap = { version = "4.5", features = ["derive"] }
 lazy_static = "1.4.0"
 url = "2.2.2"
+serde_json = "1"
+
+# Lambda dependencies
+lambda_http = { version = "0.13", optional = true }
+lambda_runtime = { version = "0.13", optional = true }
+tokio = { version = "1", features = ["macros"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+flate2 = { version = "1", optional = true }
+
+[features]
+default = []
+lambda = ["lambda_http", "lambda_runtime", "tokio", "reqwest", "aws-config", "aws-sdk-s3", "serde", "tracing-subscriber", "flate2"]
 
 [dev-dependencies]
 assert_cmd = "2.0"
