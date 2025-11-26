@@ -9,6 +9,69 @@ permissions:
   contents: write
 
 jobs:
+  build-cli:
+    name: Build CLI Binaries
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: hq-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: hq-linux-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: hq-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: hq-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: hq-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build CLI
+        run: cargo build --release --bin hq --target ${{ matrix.target }}
+
+      - name: Package binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/hq dist/${{ matrix.name }}
+          cd dist
+          tar czf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
+
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/hq.exe dist/${{ matrix.name }}
+          cd dist
+          7z a ${{ matrix.name }}.zip ${{ matrix.name }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.name }}
+          path: dist/${{ matrix.name }}.*
+
   build-lambda:
     name: Build Lambda Binaries
     runs-on: ubuntu-latest
@@ -54,35 +117,45 @@ jobs:
 
   release:
     name: Create Release
-    needs: build-lambda
+    needs: [build-cli, build-lambda]
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: lambda-binaries
-          path: dist/lambda
+          path: dist
+
+      - name: Organize artifacts
+        run: |
+          mkdir -p release
+          find dist -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+          ls -lh release/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/lambda/*.zip
+          files: release/*
           generate_release_notes: true
           body: |
-            ## AWS Lambda Support
+            ## CLI Binaries
 
-            Pre-built Lambda binaries for ARM64 (Graviton) and x86_64 architectures.
+            Pre-built CLI binaries for multiple platforms:
 
-            ### Deployment
+            - `hq-linux-x86_64.tar.gz` - Linux x86_64
+            - `hq-linux-aarch64.tar.gz` - Linux ARM64
+            - `hq-macos-x86_64.tar.gz` - macOS Intel
+            - `hq-macos-aarch64.tar.gz` - macOS Apple Silicon
+            - `hq-windows-x86_64.exe.zip` - Windows x86_64
 
-            Download the appropriate zip file and deploy using AWS CLI or OpenTofu/Terraform.
-            See [README](https://github.com/${{ github.repository }}/blob/main/README.md#aws-lambda-deployment) for details.
+            ## AWS Lambda Binaries
 
-            ### Assets
+            Pre-built Lambda binaries:
 
             - `lambda-arm64.zip` - ARM64 (AWS Graviton2/3)
             - `lambda-x86_64.zip` - x86_64 (Intel/AMD)
+
+            See [README](https://github.com/${{ github.repository }}/blob/main/README.md#aws-lambda-deployment) for Lambda deployment details.
