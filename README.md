@@ -79,3 +79,75 @@ $ curl --silent example.com | hq 'body' | bat --language html
 ```
 
 > <img alt="Syntax highlighted output" width="700" src="https://user-images.githubusercontent.com/2346707/132808980-db8991ff-9177-4cb7-a018-39ad94282374.png" />
+
+## AWS Lambda Deployment
+
+Deploy `hq` as an AWS Lambda function to process HTML via HTTP requests.
+
+### Query Parameters
+
+- `url` (required): URL to fetch HTML from (supports `http://`, `https://`, or `s3://`)
+- `selector` (optional): CSS selector (default: `:root`)
+- `text` (optional): Extract text only (`true`/`1`)
+- `pretty` (optional): Pretty print output (`true`/`1`)
+- `attribute` (optional): Extract specific attributes (can be repeated)
+- `compact` (optional): Compact output (`true`/`1`)
+- `offset` (optional): Byte offset for partial fetches
+- `length` (optional): Byte length for partial fetches
+
+### Download Pre-built Binaries
+
+Download from [GitHub Releases](https://github.com/MultisampledNight/hq/releases):
+- `lambda-arm64.zip` (AWS Graviton2/3)
+- `lambda-x86_64.zip` (Intel/AMD)
+
+### Build Lambda Package (Optional)
+
+```sh
+./build-lambda.sh
+```
+
+Creates:
+- `dist/lambda/lambda-arm64.zip` (AWS Graviton)
+- `dist/lambda/lambda-x86_64.zip` (Intel/AMD)
+
+### Deploy with OpenTofu/Terraform
+
+```sh
+tofu init
+tofu apply
+```
+
+Variables:
+- `aws_region`: AWS region (default: `us-east-1`)
+- `lambda_architecture`: `arm64` or `x86_64` (default: `arm64`)
+- `function_name`: Lambda name (default: `hq`)
+
+### Example Usage
+
+```sh
+curl "https://YOUR_FUNCTION_URL?url=https://example.com&selector=title"
+```
+
+### Manual Deployment
+
+```sh
+aws lambda create-function \
+  --function-name hq \
+  --runtime provided.al2023 \
+  --role arn:aws:iam::ACCOUNT:role/lambda-role \
+  --handler bootstrap \
+  --zip-file fileb://dist/lambda/lambda-arm64.zip \
+  --architectures arm64
+```
+
+## Releases
+
+To create a new release with Lambda binaries:
+
+```sh
+git tag -a v0.x.x -m "Release v0.x.x"
+git push origin v0.x.x
+```
+
+GitHub Actions will automatically build Lambda binaries and create a release.

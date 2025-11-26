@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-lambda:
+    name: Build Lambda Binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-lambda
+        run: pip install cargo-lambda
+
+      - name: Build Lambda ARM64
+        run: cargo lambda build --release --bin lambda --features lambda --arm64
+
+      - name: Build Lambda x86_64
+        run: cargo lambda build --release --bin lambda --features lambda --x86-64
+
+      - name: Package binaries
+        run: |
+          mkdir -p dist/lambda
+
+          # Package ARM64
+          cp target/lambda/lambda/bootstrap dist/lambda/bootstrap
+          cd dist/lambda
+          zip lambda-arm64.zip bootstrap
+          cd ../..
+
+          # Package x86_64
+          cp target/lambda/lambda/bootstrap dist/lambda/bootstrap
+          cd dist/lambda
+          zip lambda-x86_64.zip bootstrap
+          rm bootstrap
+          cd ../..
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-binaries
+          path: dist/lambda/*.zip
+
+  release:
+    name: Create Release
+    needs: build-lambda
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-binaries
+          path: dist/lambda
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/lambda/*.zip
+          generate_release_notes: true
+          body: |
+            ## AWS Lambda Support
+
+            Pre-built Lambda binaries for ARM64 (Graviton) and x86_64 architectures.
+
+            ### Deployment
+
+            Download the appropriate zip file and deploy using AWS CLI or OpenTofu/Terraform.
+            See [README](https://github.com/${{ github.repository }}/blob/main/README.md#aws-lambda-deployment) for details.
+
+            ### Assets
+
+            - `lambda-arm64.zip` - ARM64 (AWS Graviton2/3)
+            - `lambda-x86_64.zip` - x86_64 (Intel/AMD)

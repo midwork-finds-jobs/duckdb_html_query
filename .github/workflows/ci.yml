@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test and Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup devenv cache
+        uses: cachix/cachix-action@v14
+        with:
+          name: devenv
+
+      - name: Install devenv
+        run: |
+          nix profile install --accept-flake-config github:cachix/devenv/latest
+
+      - name: Build devenv shell
+        run: devenv shell
+
+      - name: Run cargo fmt
+        run: devenv shell cargo fmt --all --check
+
+      - name: Run cargo clippy
+        run: devenv shell cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: devenv shell cargo test --all-features
