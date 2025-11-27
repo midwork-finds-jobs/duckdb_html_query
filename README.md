@@ -9,6 +9,21 @@ Like [`jq`](https://stedolan.github.io/jq/), but for HTML. Uses [CSS selectors](
 cargo install --git https://github.com/MultisampledNight/hq
 ```
 
+### DuckDB Extension
+
+Query HTML directly in DuckDB using SQL:
+
+```sql
+LOAD './duckdb-extension/build/debug/hq.duckdb_extension';
+
+SELECT hq('<html><title>Test</title></html>', 'title', true) as title;
+-- Returns: Test
+
+SELECT hq_attr(html, 'href', 'a') as links FROM pages;
+```
+
+See [duckdb-extension/README.md](duckdb-extension/README.md) for details.
+
 ## Examples
 
 ### Using with cURL to find part of a page by ID
