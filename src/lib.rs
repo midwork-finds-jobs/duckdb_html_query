@@ -69,6 +69,24 @@ fn serialize_text(node: &NodeRef, ignore_whitespace: bool) -> String {
     result
 }
 
+/// Extract text content from all elements matching selector, returning each separately
+pub fn extract_all_text(html: &str, selector: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let document = kuchikiki::parse_html().one(html);
+    let mut results = Vec::new();
+
+    for node in document
+        .select(selector)
+        .map_err(|_| "Failed to parse CSS selector")?
+    {
+        let text = serialize_text(node.as_node(), false).trim().to_string();
+        if !text.is_empty() {
+            results.push(text);
+        }
+    }
+
+    Ok(results)
+}
+
 pub fn process_html(html: &str, config: &HqConfig) -> Result<String, Box<dyn Error>> {
     let document = kuchikiki::parse_html().one(html);
 

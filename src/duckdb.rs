@@ -2,7 +2,7 @@ extern crate duckdb;
 extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
-use crate::{js_decode, process_html, HqConfig};
+use crate::{extract_all_text, js_decode, process_html, HqConfig};
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     ffi,
@@ -156,6 +156,26 @@ impl VScalar for HtmlQueryFunction {
     }
 }
 
+/// Parse JSON string and decode HTML entities in values
+fn parse_and_decode_json(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+
+    // Try to parse JSON first, then decode HTML entities in string values
+    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        let decoded_json = decode_html_in_json(json_val);
+        return serde_json::to_string(&decoded_json).ok();
+    }
+
+    // If not valid JSON, try decoding entities first then parsing
+    let decoded = htmlescape::decode_html(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&decoded) {
+        return serde_json::to_string(&json_val).ok();
+    }
+
+    // Return decoded string as-is if not valid JSON
+    Some(decoded)
+}
+
 /// Recursively decode HTML entities in JSON string values
 fn decode_html_in_json(value: serde_json::Value) -> serde_json::Value {
     match value {
@@ -274,26 +294,30 @@ impl VScalar for HtmlExtractJsonFunction {
                 }
             } else {
                 // Mode 1: Direct JSON (for ld+json scripts)
-                let trimmed = script_content.trim();
-
-                // Try to parse JSON first, then decode HTML entities in string values
-                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                    let decoded_json = decode_html_in_json(json_val);
-                    Some(
-                        serde_json::to_string(&decoded_json)
-                            .unwrap_or_else(|_| trimmed.to_string()),
-                    )
-                } else {
-                    // If not valid JSON, try decoding entities first then parsing
-                    let decoded = match htmlescape::decode_html(trimmed) {
-                        Ok(d) => d,
-                        Err(_) => trimmed.to_string(),
-                    };
-                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&decoded) {
-                        Some(serde_json::to_string(&json_val).unwrap_or_else(|_| decoded.clone()))
-                    } else {
-                        Some(decoded)
+                // Extract all matching scripts separately and build JSON array if multiple
+                match extract_all_text(&html, &selector) {
+                    Ok(scripts) if scripts.is_empty() => None,
+                    Ok(scripts) if scripts.len() == 1 => {
+                        // Single script - return as single JSON object
+                        parse_and_decode_json(&scripts[0])
                     }
+                    Ok(scripts) => {
+                        // Multiple scripts - return as JSON array
+                        let json_values: Vec<serde_json::Value> = scripts
+                            .iter()
+                            .filter_map(|s| {
+                                parse_and_decode_json(s)
+                                    .and_then(|json_str| serde_json::from_str(&json_str).ok())
+                            })
+                            .collect();
+
+                        if json_values.is_empty() {
+                            None
+                        } else {
+                            serde_json::to_string(&json_values).ok()
+                        }
+                    }
+                    Err(_) => None,
                 }
             };
 

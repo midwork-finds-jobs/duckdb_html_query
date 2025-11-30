@@ -80,5 +80,34 @@ SELECT json_extract_string(
   '$.title'
 ) as title;
 
+-- Test 9: Multiple LD+JSON scripts return JSON array
+SELECT 'Test 9: Multiple LD+JSON scripts' as test;
+SELECT html_extract_json('
+<html>
+<head>
+  <script type="application/ld+json">
+  {"@type": "Product", "name": "Widget A"}
+  </script>
+  <script type="application/ld+json">
+  {"@type": "Organization", "name": "Acme Corp"}
+  </script>
+</head>
+</html>', 'script[type="application/ld+json"]') as ld_json_array;
+
+-- Verify it's a valid JSON array with 2 elements
+SELECT 'Test 9b: Parse array elements' as test;
+SELECT
+  json_extract_string(ld_json_array, '$[0].name') as first_name,
+  json_extract_string(ld_json_array, '$[1].name') as second_name
+FROM (
+  SELECT html_extract_json('
+    <html>
+    <head>
+      <script type="application/ld+json">{"@type": "Product", "name": "Widget"}</script>
+      <script type="application/ld+json">{"@type": "Organization", "name": "Acme"}</script>
+    </head>
+    </html>', 'script[type="application/ld+json"]') as ld_json_array
+);
+
 -- Cleanup
 DROP TABLE pages;
