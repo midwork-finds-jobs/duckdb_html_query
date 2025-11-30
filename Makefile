@@ -1,4 +1,4 @@
-.PHONY: clean clean_all cli
+.PHONY: clean clean_all
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -23,10 +23,6 @@ configure: venv platform extension_version
 
 debug: build_extension_library_debug build_extension_with_metadata_debug
 release: build_extension_library_release build_extension_with_metadata_release
-
-# Build CLI binary
-cli:
-	cargo build --release --features cli --no-default-features --bin hq
 
 test: test_debug
 test_debug: test_extension_debug
