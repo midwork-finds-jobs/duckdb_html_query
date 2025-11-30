@@ -38,3 +38,42 @@ jobs:
 
       - name: Run tests
         run: devenv shell cargo test --all-features
+
+  build-duckdb-extension:
+    name: Build DuckDB Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            duckdb-extension/target
+          key: ${{ runner.os }}-cargo-duckdb-${{ hashFiles('duckdb-extension/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-duckdb-
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build extension
+        working-directory: duckdb-extension
+        run: make release
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hq-duckdb-extension-linux-amd64
+          path: duckdb-extension/build/release/hq.duckdb_extension
