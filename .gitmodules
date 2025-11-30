@@ -1,0 +1,3 @@
+[submodule "duckdb-extension/extension-ci-tools"]
+	path = duckdb-extension/extension-ci-tools
+	url = https://github.com/duckdb/extension-ci-tools

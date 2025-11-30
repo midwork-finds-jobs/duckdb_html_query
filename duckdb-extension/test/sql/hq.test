@@ -1,0 +1,140 @@
+# name: test/sql/hq.test
+# description: Test hq extension
+# group: [hq]
+
+# Before we load the extension, this will fail
+statement error
+SELECT hq('<html><title>Test</title></html>', 'title');
+----
+Catalog Error: Scalar Function with name hq does not exist!
+
+statement error
+SELECT hq_attr('<html><a href="/page">Link</a></html>', 'href', 'a');
+----
+Catalog Error: Scalar Function with name hq_attr does not exist!
+
+# Require statement will ensure the extension is loaded from now on
+require hq
+
+# Test basic HTML parsing
+query I
+SELECT hq('<html><head><title>Test Page</title></head><body><p>Hello World</p></body></html>', 'title');
+----
+<title>Test Page</title>
+
+# Test text extraction
+query I
+SELECT hq('<html><body><p>Hello World</p></body></html>', 'p', true);
+----
+Hello World
+
+# Test pretty printing
+query I
+SELECT hq('<html><body><div>Test</div></body></html>', 'div', false, true) LIKE '%Test%';
+----
+true
+
+# Test CSS selectors - class
+query I
+SELECT hq('<html><body><div class="content">Content</div></body></html>', '.content', true);
+----
+Content
+
+# Test CSS selectors - id
+query I
+SELECT hq('<html><body><div id="main">Main</div></body></html>', '#main', true);
+----
+Main
+
+# Test CSS selectors - attribute
+query I
+SELECT hq('<html><body><a href="/test">Link</a></body></html>', 'a[href="/test"]', true);
+----
+Link
+
+# Test attribute extraction - href
+query I
+SELECT hq_attr('<html><body><a href="/page1">Link 1</a><a href="/page2">Link 2</a></body></html>', 'href', 'a');
+----
+[/page1, /page2]
+
+# Test attribute extraction - src
+query I
+SELECT hq_attr('<html><body><img src="img1.jpg"/><img src="img2.jpg"/></body></html>', 'src', 'img');
+----
+[img1.jpg, img2.jpg]
+
+# Test attribute extraction with selector
+query I
+SELECT hq_attr('<html><body><a class="external" href="/ext">Ext</a><a href="/int">Int</a></body></html>', 'href', 'a.external');
+----
+[/ext]
+
+# Test with NULL input
+query I
+SELECT hq(NULL, 'title');
+----
+NULL
+
+query I
+SELECT hq_attr(NULL, 'href', 'a');
+----
+NULL
+
+# Test with default selector using single parameter
+query I
+SELECT hq('<html><head><title>Test</title></head></html>') LIKE '%<title>Test</title>%';
+----
+true
+
+# Test from table
+statement ok
+CREATE TABLE pages AS SELECT '<html><head><title>Page 1</title></head></html>' as html
+UNION ALL SELECT '<html><head><title>Page 2</title></head></html>' as html;
+
+query I
+SELECT hq(html, 'title', true) FROM pages ORDER BY 1;
+----
+Page 1
+Page 2
+
+# Test LD+JSON extraction
+query I
+SELECT hq('<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget"}</script></head></html>', 'script[type="application/ld+json"]', true) LIKE '%Widget%';
+----
+true
+
+# Test multiple elements
+query I
+SELECT length(hq('<html><body><p>One</p><p>Two</p></body></html>', 'p')) > 10;
+----
+true
+
+# Test nested selectors
+query I
+SELECT hq('<html><body><div><span>Nested</span></div></body></html>', 'div > span', true);
+----
+Nested
+
+# Test with complex HTML
+statement ok
+CREATE TABLE products AS
+SELECT '<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget A","price":"19.99"}</script></head></html>' as html
+UNION ALL SELECT '<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget B","price":"24.99"}</script></head></html>' as html;
+
+query II
+SELECT
+  json_extract(trim(hq(html, 'script[type="application/ld+json"]', true)), '$.name') as name,
+  json_extract(trim(hq(html, 'script[type="application/ld+json"]', true)), '$.price') as price
+FROM products
+ORDER BY name;
+----
+"Widget A"	"19.99"
+"Widget B"	"24.99"
+
+# Cleanup
+statement ok
+DROP TABLE pages;
+
+statement ok
+DROP TABLE products;

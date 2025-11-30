@@ -1,0 +1,19 @@
+[package]
+name = "hq_duckdb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "hq"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[profile.release]
+lto = true
+strip = true
+
+[dependencies]
+duckdb = { version = "1.4.2", features = ["vtab-loadable", "vscalar"] }
+duckdb-loadable-macros = "0.1.12"
+libduckdb-sys = { version = "1.4.2", features = ["loadable-extension"] }
+hq = { path = ".." }
