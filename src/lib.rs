@@ -115,72 +115,63 @@ pub fn process_html(html: &str, config: &HqConfig) -> Result<String, Box<dyn Err
 
     let mut result = String::from_utf8(output)?;
 
-    // Compact output if requested
+    // Compact output if requested - produces valid JSON by escaping control chars
     if config.compact {
-        // Try to parse as JSON first (trim whitespace before parsing)
         let trimmed = result.trim();
 
-        // Decode HTML entities first
-        let unescaped = match htmlescape::decode_html(trimmed) {
-            Ok(decoded) => decoded,
-            Err(_) => trimmed.to_string(),
-        };
-
         // Try direct parse first
-        let json_value = serde_json::from_str::<serde_json::Value>(&unescaped).or_else(|_| {
-            // If it fails, try fixing malformed JSON by escaping control chars inside strings
-            let mut fixed = String::with_capacity(unescaped.len() * 2);
-            let mut in_string = false;
-            let mut escape_next = false;
-
-            for c in unescaped.chars() {
-                if escape_next {
-                    fixed.push(c);
-                    escape_next = false;
-                    continue;
-                }
-
-                if c == '\\' {
-                    fixed.push(c);
-                    escape_next = true;
-                    continue;
-                }
-
-                if c == '"' {
-                    in_string = !in_string;
-                    fixed.push(c);
-                    continue;
-                }
-
-                // Only escape control characters when inside strings
-                if in_string && c.is_control() {
-                    match c {
-                        '\n' => fixed.push_str("\\n"),
-                        '\r' => fixed.push_str("\\r"),
-                        '\t' => fixed.push_str("\\t"),
-                        _ => {} // Skip other control chars
-                    }
-                } else {
-                    fixed.push(c);
-                }
-            }
-
-            serde_json::from_str::<serde_json::Value>(&fixed)
-        });
-
-        if let Ok(json_value) = json_value {
-            // If it's valid JSON, serialize it compactly
-            // This preserves spaces within text values while removing structural whitespace
+        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(trimmed) {
             result = serde_json::to_string(&json_value)?;
         } else {
-            // If not JSON, minify HTML by removing whitespace between tags
-            result = result
-                .split('>')
-                .map(|s| s.trim_start())
-                .collect::<Vec<_>>()
-                .join(">");
+            // Fix malformed JSON by escaping control chars inside strings
+            let fixed = escape_json_control_chars(trimmed);
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&fixed) {
+                result = serde_json::to_string(&json_value)?;
+            }
+            // If still not valid JSON, return as-is (might be HTML)
         }
     }
 
     Ok(result)
+}
+
+/// Escape control characters inside JSON strings to produce valid JSON
+pub fn escape_json_control_chars(input: &str) -> String {
+    let mut fixed = String::with_capacity(input.len() * 2);
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for c in input.chars() {
+        if escape_next {
+            fixed.push(c);
+            escape_next = false;
+            continue;
+        }
+
+        if c == '\\' {
+            fixed.push(c);
+            escape_next = true;
+            continue;
+        }
+
+        if c == '"' {
+            in_string = !in_string;
+            fixed.push(c);
+            continue;
+        }
+
+        // Only escape control characters when inside strings
+        if in_string && c.is_control() {
+            match c {
+                '\n' => fixed.push_str("\\n"),
+                '\r' => fixed.push_str("\\r"),
+                '\t' => fixed.push_str("\\t"),
+                _ => {} // Skip other control chars
+            }
+        } else {
+            fixed.push(c);
+        }
+    }
+
+    fixed
 }

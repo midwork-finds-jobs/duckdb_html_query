@@ -17,3 +17,4 @@ duckdb = { version = "1.4.2", features = ["vtab-loadable", "vscalar"] }
 duckdb-loadable-macros = "0.1.12"
 libduckdb-sys = { version = "1.4.2", features = ["loadable-extension"] }
 hq = { path = ".." }
+htmlescape = "0.3"

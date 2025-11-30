@@ -55,15 +55,16 @@ cmd_success_tests!(
         ["script", "-t", "-c"],
         "[\"First Item\",\"Second Item\",\"Third Item\"]"
     ),
-    compact_html_minifies: (
+    // Note: compact mode now only processes JSON, non-JSON content is returned as-is
+    compact_html_no_minify: (
         "<html><head>  <title>Test</title>  </head><body>  <div>  <p>Text</p>  </div>  </body></html>",
         ["body", "-c"],
-        "<body><div><p>Text</p></div></body>"
+        "<body>  <div>  <p>Text</p>  </div>  </body>\n"
     ),
-    compact_text_plain: (
+    compact_text_plain_preserved: (
         "<html><body><div>  \n  Hello World  \n  </div></body></html>",
         ["div", "-t", "-c"],
-        "Hello World  \n  \n"
+        "  \n  Hello World  \n  \n"
     ),
     without_compact_preserves_whitespace: (
         "<html><body><script>\n{\n  \"title\": \"Test\"\n}\n</script></body></html>",
