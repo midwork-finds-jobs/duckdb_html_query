@@ -1,6 +1,6 @@
 # html_query - DuckDB HTML Extension
 
-DuckDB extension for querying HTML using CSS selectors. Both functions return JSON arrays for consistent handling.
+DuckDB extension for querying HTML using CSS selectors.
 
 ## Installation
 
@@ -9,38 +9,50 @@ INSTALL html_query FROM community;
 LOAD html_query;
 ```
 
+## Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `html_query(html, selector?, text_only?)` | VARCHAR | First matching element |
+| `html_query_all(html, selector?, text_only?)` | JSON array | All matching elements |
+| `html_extract_json(html, selector, var_pattern?)` | JSON array | JSON from script tags |
+
 ## Usage
 
-### html_query - Extract HTML elements
-
-Returns a JSON array of matching elements.
+### html_query - First matching element
 
 ```sql
--- Extract all paragraphs (returns JSON array)
-SELECT html_query(html, 'p', true) FROM pages;
--- Returns: ["First paragraph", "Second paragraph"]
-
--- Access first element with ->>
-SELECT html_query(html, 'title', true)->>0 as title FROM pages;
+-- Get page title
+SELECT html_query(html, 'title', true) FROM pages;
 -- Returns: "My Page Title"
 
--- Get HTML (not just text)
+-- Get HTML element
 SELECT html_query(html, 'div.content') FROM pages;
--- Returns: ["<div class=\"content\">...</div>"]
+-- Returns: "<div class=\"content\">...</div>"
+
+-- Returns NULL if no match
+SELECT html_query(html, '.nonexistent', true) FROM pages;
+-- Returns: NULL
+```
+
+### html_query_all - All matching elements
+
+```sql
+-- Get all paragraphs as JSON array
+SELECT html_query_all(html, 'p', true) FROM pages;
+-- Returns: ["First paragraph", "Second paragraph"]
+
+-- Access specific element
+SELECT html_query_all(html, 'p', true)->>1 FROM pages;
+-- Returns: "Second paragraph"
 ```
 
 ### html_extract_json - Extract JSON from scripts
-
-Returns a JSON array of parsed JSON objects.
 
 ```sql
 -- Extract LD+JSON (returns array, decodes HTML entities)
 SELECT html_extract_json(html, 'script[type="application/ld+json"]') FROM pages;
 -- Returns: [{"@type":"Product","name":"Widget"}]
-
--- Multiple LD+JSON scripts return array with all objects
-SELECT html_extract_json(html, 'script[type="application/ld+json"]') FROM pages;
--- Returns: [{"@type":"Product",...}, {"@type":"Organization",...}]
 
 -- Access first JSON object
 SELECT html_extract_json(html, 'script[type="application/ld+json"]')->0->>'name' FROM pages;
@@ -49,13 +61,6 @@ SELECT html_extract_json(html, 'script[type="application/ld+json"]')->0->>'name'
 SELECT html_extract_json(html, 'script', 'var config') FROM pages;
 -- Returns: [{"debug":true}]
 ```
-
-## Functions
-
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `html_query(html, selector?, text_only?)` | JSON array of strings | Extract HTML/text using CSS selectors |
-| `html_extract_json(html, selector, var_pattern?)` | JSON array of objects | Extract JSON from script tags |
 
 ## CSS Selectors
 
@@ -70,7 +75,7 @@ SELECT html_extract_json(html, 'script', 'var config') FROM pages;
 
 ```sh
 make configure
-make release    # builds build/release/html_query.duckdb_extension
+make release
 ```
 
 ## License

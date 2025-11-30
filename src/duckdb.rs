@@ -15,9 +15,9 @@ use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use libduckdb_sys::duckdb_string_t;
 use std::error::Error;
 
-/// HTML query scalar function - returns JSON array of matching elements
+/// HTML query scalar function - returns first matching element
 ///
-/// Extracts HTML elements using CSS selectors, returning results as JSON array.
+/// Extracts first HTML element matching CSS selector.
 ///
 /// # Arguments
 /// * `html` - VARCHAR containing HTML content
@@ -25,16 +25,12 @@ use std::error::Error;
 /// * `text_only` - Optional BOOLEAN to extract text only (default: false)
 ///
 /// # Returns
-/// * VARCHAR - JSON array of matching elements, or NULL on error
+/// * VARCHAR - First matching element, or NULL if no match
 ///
 /// # Examples
 /// ```sql
-/// -- Extract all paragraphs (returns JSON array)
-/// SELECT html_query(html, 'p', true) FROM pages;
-/// -- Returns: ["First paragraph", "Second paragraph"]
-///
-/// -- Access first element
-/// SELECT html_query(html, 'title', true)->>0 FROM pages;
+/// SELECT html_query(html, 'title', true) FROM pages;
+/// -- Returns: "Page Title"
 /// ```
 struct HtmlQueryFunction;
 
@@ -110,15 +106,11 @@ impl VScalar for HtmlQueryFunction {
 
             match extract_all_elements(&html_contents[i], selector, text_only) {
                 Ok(elements) if elements.is_empty() => {
-                    // Return empty array for no matches
-                    output_vector.insert(i, "[]");
+                    output_vector.set_null(i);
                 }
                 Ok(elements) => {
-                    // Return JSON array of results
-                    match serde_json::to_string(&elements) {
-                        Ok(json) => output_vector.insert(i, &json),
-                        Err(_) => output_vector.set_null(i),
-                    }
+                    // Return first element only
+                    output_vector.insert(i, &elements[0]);
                 }
                 Err(_) => {
                     output_vector.set_null(i);
@@ -145,6 +137,140 @@ impl VScalar for HtmlQueryFunction {
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
             // html_query(html, selector, text_only)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Boolean),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+        ]
+    }
+}
+
+/// HTML query all scalar function - returns JSON array of all matching elements
+///
+/// Extracts all HTML elements matching CSS selector as JSON array.
+///
+/// # Arguments
+/// * `html` - VARCHAR containing HTML content
+/// * `selector` - Optional VARCHAR with CSS selector (default: ":root")
+/// * `text_only` - Optional BOOLEAN to extract text only (default: false)
+///
+/// # Returns
+/// * VARCHAR - JSON array of all matching elements
+///
+/// # Examples
+/// ```sql
+/// SELECT html_query_all(html, 'p', true) FROM pages;
+/// -- Returns: ["First paragraph", "Second paragraph"]
+/// ```
+struct HtmlQueryAllFunction;
+
+impl VScalar for HtmlQueryAllFunction {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> std::result::Result<(), Box<dyn Error>> {
+        let size = input.len();
+        let html_vector = input.flat_vector(0);
+        let mut output_vector = output.flat_vector();
+
+        let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
+        let html_contents: Vec<String> = html_values
+            .iter()
+            .map(|ptr| DuckString::new(&mut { *ptr }).as_str().to_string())
+            .collect();
+
+        // Get selector (optional, column 1)
+        let selectors: Vec<Option<String>> = if input.num_columns() > 1 {
+            let selector_vector = input.flat_vector(1);
+            let selector_values = selector_vector.as_slice_with_len::<duckdb_string_t>(size);
+            (0..size)
+                .map(|i| {
+                    if selector_vector.row_is_null(i as u64) {
+                        None
+                    } else {
+                        Some(
+                            DuckString::new(&mut { selector_values[i] })
+                                .as_str()
+                                .to_string(),
+                        )
+                    }
+                })
+                .collect()
+        } else {
+            vec![None; size]
+        };
+
+        // Get text_only flag (optional, column 2)
+        let text_only_flags: Vec<bool> = if input.num_columns() > 2 {
+            let text_only_vector = input.flat_vector(2);
+            let text_only_values = text_only_vector.as_slice_with_len::<bool>(size);
+            (0..size)
+                .map(|i| {
+                    if text_only_vector.row_is_null(i as u64) {
+                        false
+                    } else {
+                        text_only_values[i]
+                    }
+                })
+                .collect()
+        } else {
+            vec![false; size]
+        };
+
+        for i in 0..size {
+            if html_vector.row_is_null(i as u64) {
+                output_vector.set_null(i);
+                continue;
+            }
+
+            let selector = selectors
+                .get(i)
+                .and_then(|s| s.as_ref())
+                .map(|s| s.as_str())
+                .unwrap_or(":root");
+
+            let text_only = text_only_flags[i];
+
+            match extract_all_elements(&html_contents[i], selector, text_only) {
+                Ok(elements) if elements.is_empty() => {
+                    output_vector.insert(i, "[]");
+                }
+                Ok(elements) => match serde_json::to_string(&elements) {
+                    Ok(json) => output_vector.insert(i, &json),
+                    Err(_) => output_vector.set_null(i),
+                },
+                Err(_) => {
+                    output_vector.set_null(i);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![
+            // html_query_all(html)
+            ScalarFunctionSignature::exact(
+                vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_query_all(html, selector)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_query_all(html, selector, text_only)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -365,6 +491,7 @@ impl VScalar for HtmlExtractJsonFunction {
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_scalar_function::<HtmlQueryFunction>("html_query")?;
+    con.register_scalar_function::<HtmlQueryAllFunction>("html_query_all")?;
     con.register_scalar_function::<HtmlExtractJsonFunction>("html_extract_json")?;
     Ok(())
 }
