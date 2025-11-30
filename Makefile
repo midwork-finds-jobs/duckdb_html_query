@@ -2,7 +2,7 @@
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-EXTENSION_NAME=hq
+EXTENSION_NAME=html_query
 
 # Set to 1 to enable Unstable API
 USE_UNSTABLE_C_API=1

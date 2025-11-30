@@ -1,6 +1,6 @@
-# name: test/sql/hq.test
-# description: Test hq extension
-# group: [hq]
+# name: test/sql/html_query.test
+# description: Test html_query extension
+# group: [html_query]
 
 # Before we load the extension, this will fail
 statement error
@@ -9,7 +9,7 @@ SELECT html_query('<html><title>Test</title></html>', 'title');
 Catalog Error: Scalar Function with name html_query does not exist!
 
 # Require statement will ensure the extension is loaded from now on
-require hq
+require html_query
 
 # Test basic HTML parsing
 query I

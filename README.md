@@ -7,7 +7,8 @@ DuckDB extension and CLI for querying HTML using CSS selectors.
 Query HTML directly in DuckDB:
 
 ```sql
-LOAD 'hq.duckdb_extension';
+INSTALL html_query FROM community;
+LOAD html_query;
 
 -- Extract text with CSS selector
 SELECT html_query('<html><title>Test</title></html>', 'title', true) as title;
@@ -29,7 +30,7 @@ SELECT html_extract_json(html, 'script', 'var jobs') FROM pages;
 
 ```sh
 make configure
-make release    # builds build/release/hq.duckdb_extension
+make release    # builds build/release/html_query.duckdb_extension
 ```
 
 ### CSS Selectors

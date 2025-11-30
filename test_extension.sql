@@ -1,5 +1,5 @@
--- Load the hq extension
-LOAD './build/release/hq.duckdb_extension';
+-- Load the html_query extension
+LOAD './build/release/html_query.duckdb_extension';
 
 -- Test 1: Basic HTML parsing
 SELECT 'Test 1: Basic HTML parsing' as test;
