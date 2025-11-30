@@ -85,6 +85,53 @@ SELECT hq_attr('<div class="header">Test</div>', 'class', 'div');
 
 **Returns:** VARCHAR[] (array of strings) or NULL
 
+### html_extract_js_value() function
+
+Extract and parse JavaScript variable values from HTML. Handles simple values, JSON objects/arrays, and `JSON.parse()` calls with hex/unicode escapes.
+
+```sql
+-- Extract simple values
+SELECT html_extract_js_value('<script>var count = 42;</script>', 'var count');
+-- Returns: 42
+
+-- Extract JSON objects
+SELECT html_extract_js_value('<script>var config = {"debug": true};</script>', 'var config')::JSON;
+-- Returns: {"debug":true}
+
+-- Extract from JSON.parse() with hex escapes (common in job boards like Zoho)
+SELECT html_extract_js_value(html, 'var jobs')::JSON FROM pages;
+-- Automatically decodes: var jobs = JSON.parse('[{\x22Salary\x22:\x2250000$\x22}]');
+-- Returns: [{"Salary":"50000$"}]
+
+-- Extract and unnest array values
+SELECT j->>'title' as title, j->>'salary' as salary
+FROM (
+    SELECT unnest(from_json(
+        html_extract_js_value(html, 'var jobs')::JSON,
+        '["json"]'
+    )) as j
+    FROM pages
+);
+```
+
+**Parameters:**
+- `html` (VARCHAR): HTML content containing script tags
+- `var_pattern` (VARCHAR): Variable declaration pattern (e.g., `'var jobs'`, `'const config'`, `'let data'`)
+
+**Returns:** VARCHAR (JSON string) or NULL
+
+**Handles:**
+- Simple values: `var x = 42;` → `42`
+- Strings: `var x = "hello";` → `"hello"`
+- Booleans/null: `var x = true;` → `true`
+- JSON objects: `var x = {"key": "value"};` → `{"key":"value"}`
+- JSON arrays: `var x = [1, 2, 3];` → `[1,2,3]`
+- `JSON.parse('...')` with single quotes
+- `JSON.parse("...")` with double quotes
+- Hex escapes: `\x22` → `"`
+- Unicode escapes: `\u00e9` → `é`
+- Multiline JSON
+
 ### hq_decode_js_string() function
 
 Decode JavaScript string literals with hex/unicode escapes and invalid escapes.
@@ -97,11 +144,6 @@ SELECT hq_decode_js_string('[{\x22name\x22:\x22value\x22}]');
 -- Decode unicode escapes
 SELECT hq_decode_js_string('Title\\u2013Profil');
 -- Returns: Title–Profil
-
--- Extract and decode JSON from JavaScript
-SELECT hq_decode_js_string(
-  regexp_extract(hq(html, 'script', true), 'JSON\.parse\(''(.*)''', 1)
-) FROM pages;
 ```
 
 **Parameters:**
@@ -114,8 +156,6 @@ SELECT hq_decode_js_string(
 - `\uNNNN` unicode escapes → unicode characters
 - `\\uNNNN` double-escaped unicode → unicode characters
 - `\-` and `\/` invalid JSON escapes → `-` and `/`
-
-**See:** [JAVASCRIPT-JSON-DUCKDB.md](../JAVASCRIPT-JSON-DUCKDB.md) for complete examples
 
 ## Examples
 
