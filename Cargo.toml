@@ -1,47 +1,49 @@
 [package]
 name = "hq"
-description = "Like jq, but for HTML."
-categories = ["command-line-utilities"]
-keywords = ["CSS", "HTML", "query"]
-repository = "https://github.com/MultisampledNight/hq"
+description = "HTML query - CSS selectors for HTML, like jq for JSON. DuckDB extension included."
+categories = ["command-line-utilities", "database"]
+keywords = ["CSS", "HTML", "query", "duckdb"]
+repository = "https://github.com/midwork-finds-jobs/hq"
 readme = "README.md"
 license = "MIT"
 version = "0.5.0"
 authors = ["Michael Maclean <michael@mgdm.net>", "MultisampledNight"]
-edition = "2024"
+edition = "2021"
+
+[lib]
+name = "hq"
+crate-type = ["lib", "cdylib"]
+path = "src/lib.rs"
 
 [[bin]]
 name = "hq"
 path = "src/main.rs"
+required-features = ["cli"]
 
-[[bin]]
-name = "lambda"
-path = "src/lambda.rs"
-required-features = ["lambda"]
+[profile.release]
+lto = true
+strip = true
 
 [dependencies]
 kuchikiki = "0.8"
 html5ever = "0.26.0"
-clap = { version = "4.5", features = ["derive"] }
-lazy_static = "1.4.0"
 url = "2.2.2"
 serde_json = "1"
 htmlescape = "0.3"
+lazy_static = "1.4.0"
 
-# Lambda dependencies
-lambda_http = { version = "0.13", optional = true }
-lambda_runtime = { version = "0.13", optional = true }
-tokio = { version = "1", features = ["macros"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
-aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls", "rt-tokio"], optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-flate2 = { version = "1", optional = true }
+# CLI dependencies
+clap = { version = "4.5", features = ["derive"], optional = true }
+
+# DuckDB extension dependencies
+duckdb = { version = "1.4.2", features = ["vtab-loadable", "vscalar"], optional = true }
+duckdb-loadable-macros = { version = "0.1.12", optional = true }
+libduckdb-sys = { version = "1.4.2", features = ["loadable-extension"], optional = true }
 
 [features]
-default = []
-lambda = ["lambda_http", "lambda_runtime", "tokio", "reqwest", "aws-config", "aws-sdk-s3", "serde", "tracing-subscriber", "flate2"]
+default = ["cli"]
+cli = ["clap"]
+duckdb = ["dep:duckdb", "duckdb-loadable-macros", "libduckdb-sys"]
 
 [dev-dependencies]
 assert_cmd = "2.0"

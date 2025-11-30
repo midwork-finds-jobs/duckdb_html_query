@@ -2,6 +2,7 @@ extern crate duckdb;
 extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
+use crate::{js_decode, process_html, HqConfig};
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     ffi,
@@ -11,7 +12,6 @@ use duckdb::{
     Connection, Result,
 };
 use duckdb_loadable_macros::duckdb_entrypoint_c_api;
-use hq::{process_html, HqConfig};
 use libduckdb_sys::duckdb_string_t;
 use std::error::Error;
 
@@ -166,13 +166,11 @@ fn decode_html_in_json(value: serde_json::Value) -> serde_json::Value {
         serde_json::Value::Array(arr) => {
             serde_json::Value::Array(arr.into_iter().map(decode_html_in_json).collect())
         }
-        serde_json::Value::Object(map) => {
-            serde_json::Value::Object(
-                map.into_iter()
-                    .map(|(k, v)| (k, decode_html_in_json(v)))
-                    .collect(),
-            )
-        }
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, decode_html_in_json(v)))
+                .collect(),
+        ),
         other => other,
     }
 }
@@ -231,11 +229,7 @@ impl VScalar for HtmlExtractJsonFunction {
                     if var_vector.row_is_null(i as u64) {
                         None
                     } else {
-                        Some(
-                            DuckString::new(&mut { var_values[i] })
-                                .as_str()
-                                .to_string(),
-                        )
+                        Some(DuckString::new(&mut { var_values[i] }).as_str().to_string())
                     }
                 })
                 .collect()
@@ -274,7 +268,7 @@ impl VScalar for HtmlExtractJsonFunction {
 
             let result = if let Some(var_pattern) = &var_patterns[i] {
                 // Mode 2: Extract JS variable
-                match hq::js_decode::extract_js_variable(&script_content, var_pattern) {
+                match js_decode::extract_js_variable(&script_content, var_pattern) {
                     Ok(js_value) => Some(js_value.to_json_string()),
                     Err(_) => None,
                 }
@@ -296,9 +290,7 @@ impl VScalar for HtmlExtractJsonFunction {
                         Err(_) => trimmed.to_string(),
                     };
                     if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&decoded) {
-                        Some(
-                            serde_json::to_string(&json_val).unwrap_or_else(|_| decoded.clone()),
-                        )
+                        Some(serde_json::to_string(&json_val).unwrap_or_else(|_| decoded.clone()))
                     } else {
                         Some(decoded)
                     }
@@ -341,6 +333,8 @@ impl VScalar for HtmlExtractJsonFunction {
     }
 }
 
+/// # Safety
+/// Called by DuckDB to initialize the extension. Must only be called once.
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_scalar_function::<HtmlQueryFunction>("html_query")?;

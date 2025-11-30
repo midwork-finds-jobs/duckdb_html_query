@@ -2,8 +2,11 @@ pub mod js_decode;
 pub mod link;
 pub mod pretty_print;
 
-use kuchikiki::NodeRef;
+#[cfg(feature = "duckdb")]
+pub mod duckdb;
+
 use kuchikiki::traits::{NodeIterator, TendrilSink};
+use kuchikiki::NodeRef;
 use std::error::Error;
 use std::io::{self, Write};
 use url::Url;
@@ -39,11 +42,11 @@ impl Default for HqConfig {
 
 fn select_attributes(node: &NodeRef, attributes: &[String], output: &mut dyn io::Write) {
     if let Some(as_element) = node.as_element() {
-        for attr in attributes {
-            if let Ok(elem_atts) = as_element.attributes.try_borrow()
-                && let Some(val) = elem_atts.get(attr.as_str())
-            {
-                writeln!(output, "{val}").ok();
+        if let Ok(elem_atts) = as_element.attributes.try_borrow() {
+            for attr in attributes {
+                if let Some(val) = elem_atts.get(attr.as_str()) {
+                    writeln!(output, "{val}").ok();
+                }
             }
         }
     }

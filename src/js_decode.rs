@@ -346,7 +346,11 @@ pub fn fix_mojibake(input: &str) -> String {
         .chars()
         .filter_map(|c| {
             let code = c as u32;
-            if code <= 255 { Some(code as u8) } else { None }
+            if code <= 255 {
+                Some(code as u8)
+            } else {
+                None
+            }
         })
         .collect();
 

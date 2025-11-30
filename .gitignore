@@ -3,11 +3,10 @@
 **/*.rs.bk
 
 # DuckDB extension build artifacts
-duckdb-extension/target
-duckdb-extension/build
-duckdb-extension/configure/venv
-duckdb-extension/configure/extension_version.txt
-duckdb-extension/configure/platform.txt
+/build
+/configure/venv
+/configure/extension_version.txt
+/configure/platform.txt
 
 # Devenv
 .devenv*
@@ -20,7 +19,5 @@ devenv.local.yaml
 # pre-commit
 .pre-commit-config.yaml
 
-# Ignore terraform tests
-.terraform*
-
+# Test HTML files
 *.html

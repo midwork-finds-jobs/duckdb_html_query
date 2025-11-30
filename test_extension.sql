@@ -1,5 +1,5 @@
 -- Load the hq extension
-LOAD './build/debug/hq.duckdb_extension';
+LOAD './build/release/hq.duckdb_extension';
 
 -- Test 1: Basic HTML parsing
 SELECT 'Test 1: Basic HTML parsing' as test;

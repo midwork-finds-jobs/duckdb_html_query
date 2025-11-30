@@ -1,5 +1,5 @@
 use clap::Parser;
-use hq::{HqConfig, process_html};
+use hq::{process_html, HqConfig};
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
