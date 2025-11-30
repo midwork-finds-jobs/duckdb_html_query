@@ -2,7 +2,7 @@ extern crate duckdb;
 extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
-use crate::{extract_all_text, js_decode, process_html, HqConfig};
+use crate::{extract_all_elements, extract_all_text, js_decode, process_html, HqConfig};
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     ffi,
@@ -15,9 +15,9 @@ use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use libduckdb_sys::duckdb_string_t;
 use std::error::Error;
 
-/// HTML query scalar function
+/// HTML query scalar function - returns JSON array of matching elements
 ///
-/// Processes HTML content using CSS selectors, similar to jq for JSON.
+/// Extracts HTML elements using CSS selectors, returning results as JSON array.
 ///
 /// # Arguments
 /// * `html` - VARCHAR containing HTML content
@@ -25,19 +25,16 @@ use std::error::Error;
 /// * `text_only` - Optional BOOLEAN to extract text only (default: false)
 ///
 /// # Returns
-/// * VARCHAR - Processed HTML content or NULL on error
+/// * VARCHAR - JSON array of matching elements, or NULL on error
 ///
 /// # Examples
 /// ```sql
-/// -- Extract title from HTML
-/// SELECT html_query(html, 'title') FROM pages;
+/// -- Extract all paragraphs (returns JSON array)
+/// SELECT html_query(html, 'p', true) FROM pages;
+/// -- Returns: ["First paragraph", "Second paragraph"]
 ///
-/// -- Get text only from element
-/// SELECT html_query(html, '.content', true) FROM pages;
-///
-/// -- Use CSS pseudo-selectors
-/// SELECT html_query(html, 'p:last-child', true) FROM pages;
-/// SELECT html_query(html, 'li:nth-child(3)', true) FROM pages;
+/// -- Access first element
+/// SELECT html_query(html, 'title', true)->>0 FROM pages;
 /// ```
 struct HtmlQueryFunction;
 
@@ -109,15 +106,19 @@ impl VScalar for HtmlQueryFunction {
                 .map(|s| s.as_str())
                 .unwrap_or(":root");
 
-            let config = HqConfig {
-                selector: selector.to_string(),
-                text_only: text_only_flags[i],
-                ..Default::default()
-            };
+            let text_only = text_only_flags[i];
 
-            match process_html(&html_contents[i], &config) {
-                Ok(result) => {
-                    output_vector.insert(i, result.trim());
+            match extract_all_elements(&html_contents[i], selector, text_only) {
+                Ok(elements) if elements.is_empty() => {
+                    // Return empty array for no matches
+                    output_vector.insert(i, "[]");
+                }
+                Ok(elements) => {
+                    // Return JSON array of results
+                    match serde_json::to_string(&elements) {
+                        Ok(json) => output_vector.insert(i, &json),
+                        Err(_) => output_vector.set_null(i),
+                    }
                 }
                 Err(_) => {
                     output_vector.set_null(i);
@@ -287,22 +288,24 @@ impl VScalar for HtmlExtractJsonFunction {
             };
 
             let result = if let Some(var_pattern) = &var_patterns[i] {
-                // Mode 2: Extract JS variable
+                // Mode 2: Extract JS variable - always return array
                 match js_decode::extract_js_variable(&script_content, var_pattern) {
-                    Ok(js_value) => Some(js_value.to_json_string()),
+                    Ok(js_value) => {
+                        if let Ok(parsed) =
+                            serde_json::from_str::<serde_json::Value>(&js_value.to_json_string())
+                        {
+                            serde_json::to_string(&vec![parsed]).ok()
+                        } else {
+                            None
+                        }
+                    }
                     Err(_) => None,
                 }
             } else {
-                // Mode 1: Direct JSON (for ld+json scripts)
-                // Extract all matching scripts separately and build JSON array if multiple
+                // Mode 1: Direct JSON (for ld+json scripts) - always return array
                 match extract_all_text(&html, &selector) {
                     Ok(scripts) if scripts.is_empty() => None,
-                    Ok(scripts) if scripts.len() == 1 => {
-                        // Single script - return as single JSON object
-                        parse_and_decode_json(&scripts[0])
-                    }
                     Ok(scripts) => {
-                        // Multiple scripts - return as JSON array
                         let json_values: Vec<serde_json::Value> = scripts
                             .iter()
                             .filter_map(|s| {

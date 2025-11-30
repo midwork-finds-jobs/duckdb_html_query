@@ -87,6 +87,32 @@ pub fn extract_all_text(html: &str, selector: &str) -> Result<Vec<String>, Box<d
     Ok(results)
 }
 
+/// Extract all elements matching selector, returning each as separate string (HTML or text)
+pub fn extract_all_elements(
+    html: &str,
+    selector: &str,
+    text_only: bool,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let document = kuchikiki::parse_html().one(html);
+    let mut results = Vec::new();
+
+    for node in document
+        .select(selector)
+        .map_err(|_| "Failed to parse CSS selector")?
+    {
+        let content = if text_only {
+            serialize_text(node.as_node(), false).trim().to_string()
+        } else {
+            node.as_node().to_string()
+        };
+        if !content.is_empty() {
+            results.push(content);
+        }
+    }
+
+    Ok(results)
+}
+
 pub fn process_html(html: &str, config: &HqConfig) -> Result<String, Box<dyn Error>> {
     let document = kuchikiki::parse_html().one(html);
 
