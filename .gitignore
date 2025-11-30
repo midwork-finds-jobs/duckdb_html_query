@@ -22,3 +22,5 @@ devenv.local.yaml
 
 # Ignore terraform tests
 .terraform*
+
+*.html

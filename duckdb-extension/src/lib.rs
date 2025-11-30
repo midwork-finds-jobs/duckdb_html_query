@@ -20,27 +20,24 @@ use std::error::Error;
 /// Processes HTML content using CSS selectors, similar to jq for JSON.
 ///
 /// # Arguments
-/// * `html` - A VARCHAR or BLOB containing HTML content
+/// * `html` - VARCHAR containing HTML content
 /// * `selector` - Optional VARCHAR with CSS selector (default: ":root")
 /// * `text_only` - Optional BOOLEAN to extract text only (default: false)
-/// * `pretty` - Optional BOOLEAN to pretty print output (default: false)
 ///
 /// # Returns
 /// * VARCHAR - Processed HTML content or NULL on error
 ///
-/// # Notes
-/// * When `text_only` is true, HTML entities are automatically decoded and JSON is validated/compacted
-///
 /// # Examples
 /// ```sql
-/// -- Extract title from HTML column
-/// SELECT html_query(html_content, 'title') FROM pages;
+/// -- Extract title from HTML
+/// SELECT html_query(html, 'title') FROM pages;
 ///
-/// -- Get text only from specific element
-/// SELECT html_query(html_content, '.content', true) FROM pages;
+/// -- Get text only from element
+/// SELECT html_query(html, '.content', true) FROM pages;
 ///
-/// -- Extract LD+JSON (automatically decodes entities when text_only=true)
-/// SELECT html_query(html_content, 'script[type="application/ld+json"]', true) FROM pages;
+/// -- Use CSS pseudo-selectors
+/// SELECT html_query(html, 'p:last-child', true) FROM pages;
+/// SELECT html_query(html, 'li:nth-child(3)', true) FROM pages;
 /// ```
 struct HtmlQueryFunction;
 
@@ -56,7 +53,6 @@ impl VScalar for HtmlQueryFunction {
         let html_vector = input.flat_vector(0);
         let mut output_vector = output.flat_vector();
 
-        // Get HTML content
         let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
         let html_contents: Vec<String> = html_values
             .iter()
@@ -75,7 +71,7 @@ impl VScalar for HtmlQueryFunction {
                         Some(
                             DuckString::new(&mut { selector_values[i] })
                                 .as_str()
-                                .to_string()
+                                .to_string(),
                         )
                     }
                 })
@@ -101,32 +97,14 @@ impl VScalar for HtmlQueryFunction {
             vec![false; size]
         };
 
-        // Get pretty flag (optional, column 3)
-        let pretty_flags: Vec<bool> = if input.num_columns() > 3 {
-            let pretty_vector = input.flat_vector(3);
-            let pretty_values = pretty_vector.as_slice_with_len::<bool>(size);
-            (0..size)
-                .map(|i| {
-                    if pretty_vector.row_is_null(i as u64) {
-                        false
-                    } else {
-                        pretty_values[i]
-                    }
-                })
-                .collect()
-        } else {
-            vec![false; size]
-        };
-
-        // Process each row
         for i in 0..size {
             if html_vector.row_is_null(i as u64) {
                 output_vector.set_null(i);
                 continue;
             }
 
-            // Get selector for this row, defaulting to ":root" if None
-            let selector = selectors.get(i)
+            let selector = selectors
+                .get(i)
                 .and_then(|s| s.as_ref())
                 .map(|s| s.as_str())
                 .unwrap_or(":root");
@@ -134,10 +112,6 @@ impl VScalar for HtmlQueryFunction {
             let config = HqConfig {
                 selector: selector.to_string(),
                 text_only: text_only_flags[i],
-                pretty_print: pretty_flags[i],
-                attributes: vec![],
-                // Always use compact mode when extracting text to decode HTML entities
-                compact: text_only_flags[i],
                 ..Default::default()
             };
 
@@ -156,12 +130,12 @@ impl VScalar for HtmlQueryFunction {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![
-            // hq(html)
+            // html_query(html)
             ScalarFunctionSignature::exact(
                 vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-            // hq(html, selector)
+            // html_query(html, selector)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -169,21 +143,11 @@ impl VScalar for HtmlQueryFunction {
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-            // hq(html, selector, text_only)
+            // html_query(html, selector, text_only)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                    LogicalTypeHandle::from(LogicalTypeId::Boolean),
-                ],
-                LogicalTypeHandle::from(LogicalTypeId::Varchar),
-            ),
-            // hq(html, selector, text_only, pretty)
-            ScalarFunctionSignature::exact(
-                vec![
-                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                    LogicalTypeHandle::from(LogicalTypeId::Boolean),
                     LogicalTypeHandle::from(LogicalTypeId::Boolean),
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -192,68 +156,85 @@ impl VScalar for HtmlQueryFunction {
     }
 }
 
-/// HTML attribute extraction scalar function
+/// Recursively decode HTML entities in JSON string values
+fn decode_html_in_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            let decoded = htmlescape::decode_html(&s).unwrap_or(s);
+            serde_json::Value::String(decoded)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(decode_html_in_json).collect())
+        }
+        serde_json::Value::Object(map) => {
+            serde_json::Value::Object(
+                map.into_iter()
+                    .map(|(k, v)| (k, decode_html_in_json(v)))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
+}
+
+/// Extract JSON from HTML - unified function for LD+JSON and JS variables
 ///
-/// Extracts specific attributes from HTML elements matching a CSS selector.
+/// Extracts JSON from HTML script tags. Supports two modes:
+/// 1. Direct JSON extraction: For ld+json scripts, decodes HTML entities
+/// 2. JS variable extraction: For scripts containing var/const/let assignments
 ///
-/// # Arguments
-/// * `html` - A VARCHAR or BLOB containing HTML content
-/// * `attribute` - VARCHAR with attribute name (e.g., "href", "src")
-/// * `selector` - Optional VARCHAR with CSS selector (default: ":root")
+/// # Signatures
+/// * `html_extract_json(html, selector)` - Extract JSON from script matching selector
+/// * `html_extract_json(html, selector, var_pattern)` - Extract JS variable from script
 ///
 /// # Returns
-/// * VARCHAR[] - Array of attribute values or NULL on error
+/// * VARCHAR - JSON string or NULL on error
 ///
 /// # Examples
 /// ```sql
-/// -- Extract all hrefs from links
-/// SELECT hq_attr(html_content, 'href', 'a') FROM pages;
+/// -- Extract LD+JSON (decodes HTML entities automatically)
+/// SELECT html_extract_json(html, 'script[type="application/ld+json"]') FROM pages;
 ///
-/// -- Get all image sources
-/// SELECT hq_attr(html_content, 'src', 'img') FROM pages;
+/// -- Extract JS variable from script
+/// SELECT html_extract_json(html, 'script', 'var jobs') FROM pages;
+///
+/// -- Access JSON fields
+/// SELECT json_extract_string(
+///   html_extract_json(html, 'script[type="application/ld+json"]'),
+///   '$.title'
+/// ) FROM pages;
 /// ```
-struct HqAttrFunction;
+struct HtmlExtractJsonFunction;
 
-impl VScalar for HqAttrFunction {
+impl VScalar for HtmlExtractJsonFunction {
     type State = ();
 
     unsafe fn invoke(
         _state: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
-    ) -> std::result::Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error>> {
         let size = input.len();
         let html_vector = input.flat_vector(0);
-        let attr_vector = input.flat_vector(1);
-        let mut output_vector = output.list_vector();
+        let selector_vector = input.flat_vector(1);
+        let mut output_vector = output.flat_vector();
 
-        // Get HTML content
         let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
-        let html_contents: Vec<String> = html_values
-            .iter()
-            .map(|ptr| DuckString::new(&mut { *ptr }).as_str().to_string())
-            .collect();
+        let selector_values = selector_vector.as_slice_with_len::<duckdb_string_t>(size);
 
-        // Get attributes
-        let attr_values = attr_vector.as_slice_with_len::<duckdb_string_t>(size);
-        let attributes: Vec<String> = attr_values
-            .iter()
-            .map(|ptr| DuckString::new(&mut { *ptr }).as_str().to_string())
-            .collect();
-
-        // Get selector (optional, column 2)
-        let selectors: Vec<Option<String>> = if input.num_columns() > 2 {
-            let selector_vector = input.flat_vector(2);
-            let selector_values = selector_vector.as_slice_with_len::<duckdb_string_t>(size);
+        // Get optional var_pattern (column 2)
+        let var_patterns: Vec<Option<String>> = if input.num_columns() > 2 {
+            let var_vector = input.flat_vector(2);
+            let var_values = var_vector.as_slice_with_len::<duckdb_string_t>(size);
             (0..size)
                 .map(|i| {
-                    if selector_vector.row_is_null(i as u64) {
+                    if var_vector.row_is_null(i as u64) {
                         None
                     } else {
                         Some(
-                            DuckString::new(&mut { selector_values[i] })
+                            DuckString::new(&mut { var_values[i] })
                                 .as_str()
-                                .to_string()
+                                .to_string(),
                         )
                     }
                 })
@@ -262,60 +243,71 @@ impl VScalar for HqAttrFunction {
             vec![None; size]
         };
 
-        // Process to get all results first
-        let all_results: Vec<Option<Vec<String>>> = (0..size)
-            .map(|i| {
-                if html_vector.row_is_null(i as u64) || attr_vector.row_is_null(i as u64) {
-                    return None;
+        for i in 0..size {
+            if html_vector.row_is_null(i as u64) || selector_vector.row_is_null(i as u64) {
+                output_vector.set_null(i);
+                continue;
+            }
+
+            let html = DuckString::new(&mut { html_values[i] })
+                .as_str()
+                .to_string();
+            let selector = DuckString::new(&mut { selector_values[i] })
+                .as_str()
+                .to_string();
+
+            // Extract script content using selector
+            let config = HqConfig {
+                selector: selector.clone(),
+                text_only: true,
+                compact: true,
+                ..Default::default()
+            };
+
+            let script_content = match process_html(&html, &config) {
+                Ok(content) => content,
+                Err(_) => {
+                    output_vector.set_null(i);
+                    continue;
                 }
+            };
 
-                let config = HqConfig {
-                    selector: selectors[i].clone().unwrap_or_else(|| ":root".to_string()),
-                    text_only: false,
-                    pretty_print: false,
-                    attributes: vec![attributes[i].clone()],
-                    compact: false,
-                    ..Default::default()
-                };
-
-                match process_html(&html_contents[i], &config) {
-                    Ok(result) => {
-                        // Split result by newlines to get individual attribute values
-                        let values: Vec<String> = result
-                            .lines()
-                            .filter(|l| !l.is_empty())
-                            .map(|l| l.to_string())
-                            .collect();
-                        if values.is_empty() {
-                            None
-                        } else {
-                            Some(values)
-                        }
-                    }
+            let result = if let Some(var_pattern) = &var_patterns[i] {
+                // Mode 2: Extract JS variable
+                match hq::js_decode::extract_js_variable(&script_content, var_pattern) {
+                    Ok(js_value) => Some(js_value.to_json_string()),
                     Err(_) => None,
                 }
-            })
-            .collect();
+            } else {
+                // Mode 1: Direct JSON (for ld+json scripts)
+                let trimmed = script_content.trim();
 
-        // Calculate total capacity
-        let total_capacity: usize = all_results
-            .iter()
-            .map(|r| r.as_ref().map_or(0, |v| v.len()))
-            .sum();
-
-        // Get child vector
-        let child_vector = output_vector.child(total_capacity);
-
-        // Write results
-        let mut offset = 0;
-        for (i, result) in all_results.iter().enumerate() {
-            match result {
-                Some(values) => {
-                    output_vector.set_entry(i, offset, values.len());
-                    for value in values {
-                        child_vector.insert(offset, value.as_str());
-                        offset += 1;
+                // Try to parse JSON first, then decode HTML entities in string values
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    let decoded_json = decode_html_in_json(json_val);
+                    Some(
+                        serde_json::to_string(&decoded_json)
+                            .unwrap_or_else(|_| trimmed.to_string()),
+                    )
+                } else {
+                    // If not valid JSON, try decoding entities first then parsing
+                    let decoded = match htmlescape::decode_html(trimmed) {
+                        Ok(d) => d,
+                        Err(_) => trimmed.to_string(),
+                    };
+                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&decoded) {
+                        Some(
+                            serde_json::to_string(&json_val).unwrap_or_else(|_| decoded.clone()),
+                        )
+                    } else {
+                        Some(decoded)
                     }
+                }
+            };
+
+            match result {
+                Some(json_str) => {
+                    output_vector.insert(i, json_str.as_str());
                 }
                 None => {
                     output_vector.set_null(i);
@@ -328,313 +320,18 @@ impl VScalar for HqAttrFunction {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![
-            // hq_attr(html, attribute)
+            // html_extract_json(html, selector)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                 ],
-                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
-            ),
-            // hq_attr(html, attribute, selector)
-            ScalarFunctionSignature::exact(
-                vec![
-                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                ],
-                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
-            ),
-        ]
-    }
-}
-
-/// JavaScript string decoder function
-///
-/// Decodes JavaScript string literals with hex escapes, unicode escapes, and invalid escapes
-///
-/// # Arguments
-/// * `js_string` - A VARCHAR containing a JavaScript string literal
-///
-/// # Returns
-/// * VARCHAR - Decoded string or NULL on error
-///
-/// # Examples
-/// ```sql
-/// -- Decode JavaScript string with hex escapes
-/// SELECT hq_decode_js_string('[{\x22Salary\x22:\x2250000$\x22}]');
-/// -- Returns: [{"Salary":"50000$"}]
-///
-/// -- Use with regex to extract from JSON.parse()
-/// SELECT hq_decode_js_string(
-///   regexp_extract(hq(html, 'script', true), 'JSON\.parse\(''(.*)''', 1)
-/// ) FROM pages;
-/// ```
-struct HqDecodeJsStringFunction;
-
-impl VScalar for HqDecodeJsStringFunction {
-    type State = ();
-
-    unsafe fn invoke(
-        _state: &Self::State,
-        input: &mut DataChunkHandle,
-        output: &mut dyn WritableVector,
-    ) -> Result<(), Box<dyn Error>> {
-        let size = input.len();
-        let input_vector = input.flat_vector(0);
-        let mut output_vector = output.flat_vector();
-
-        // Get input strings
-        let input_values = input_vector.as_slice_with_len::<duckdb_string_t>(size);
-
-        for i in 0..size {
-            if input_vector.row_is_null(i as u64) {
-                output_vector.set_null(i);
-                continue;
-            }
-
-            let js_string = DuckString::new(&mut { input_values[i] })
-                .as_str()
-                .to_string();
-
-            match hq::js_decode::decode_js_string(&js_string) {
-                Ok(decoded) => {
-                    output_vector.insert(i, decoded.as_str());
-                }
-                Err(_) => {
-                    output_vector.set_null(i);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![
-            // hq_decode_js_string(js_string)
-            ScalarFunctionSignature::exact(
-                vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-        ]
-    }
-}
-
-/// HTML entity decode function
-///
-/// Decodes HTML entities like &lt;, &gt;, &amp;, &quot;, &#39;, &#x27;, etc.
-///
-/// # Arguments
-/// * `text` - A VARCHAR containing text with HTML entities
-///
-/// # Returns
-/// * VARCHAR - Decoded string or NULL on error
-///
-/// # Examples
-/// ```sql
-/// -- Decode HTML entities
-/// SELECT html_decode('&lt;p&gt;Hello &amp; World&lt;/p&gt;');
-/// -- Returns: <p>Hello & World</p>
-///
-/// SELECT html_decode('&quot;quoted&quot; text');
-/// -- Returns: "quoted" text
-/// ```
-struct HtmlDecodeFunction;
-
-impl VScalar for HtmlDecodeFunction {
-    type State = ();
-
-    unsafe fn invoke(
-        _state: &Self::State,
-        input: &mut DataChunkHandle,
-        output: &mut dyn WritableVector,
-    ) -> Result<(), Box<dyn Error>> {
-        let size = input.len();
-        let input_vector = input.flat_vector(0);
-        let mut output_vector = output.flat_vector();
-
-        let input_values = input_vector.as_slice_with_len::<duckdb_string_t>(size);
-
-        for i in 0..size {
-            if input_vector.row_is_null(i as u64) {
-                output_vector.set_null(i);
-                continue;
-            }
-
-            let text = DuckString::new(&mut { input_values[i] })
-                .as_str()
-                .to_string();
-
-            match htmlescape::decode_html(&text) {
-                Ok(decoded) => {
-                    output_vector.insert(i, decoded.as_str());
-                }
-                Err(_) => {
-                    // On decode error, return original text
-                    output_vector.insert(i, text.as_str());
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![ScalarFunctionSignature::exact(
-            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        )]
-    }
-}
-
-/// HTML entity encode function
-///
-/// Encodes special characters as HTML entities: < > & " '
-///
-/// # Arguments
-/// * `text` - A VARCHAR containing text to encode
-///
-/// # Returns
-/// * VARCHAR - Encoded string with HTML entities
-///
-/// # Examples
-/// ```sql
-/// -- Encode HTML entities
-/// SELECT html_encode('<p>Hello & World</p>');
-/// -- Returns: &lt;p&gt;Hello &amp; World&lt;/p&gt;
-///
-/// SELECT html_encode('"quoted" text');
-/// -- Returns: &quot;quoted&quot; text
-/// ```
-struct HtmlEncodeFunction;
-
-impl VScalar for HtmlEncodeFunction {
-    type State = ();
-
-    unsafe fn invoke(
-        _state: &Self::State,
-        input: &mut DataChunkHandle,
-        output: &mut dyn WritableVector,
-    ) -> Result<(), Box<dyn Error>> {
-        let size = input.len();
-        let input_vector = input.flat_vector(0);
-        let mut output_vector = output.flat_vector();
-
-        let input_values = input_vector.as_slice_with_len::<duckdb_string_t>(size);
-
-        for i in 0..size {
-            if input_vector.row_is_null(i as u64) {
-                output_vector.set_null(i);
-                continue;
-            }
-
-            let text = DuckString::new(&mut { input_values[i] })
-                .as_str()
-                .to_string();
-
-            let encoded = htmlescape::encode_minimal(&text);
-            output_vector.insert(i, encoded.as_str());
-        }
-
-        Ok(())
-    }
-
-    fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![ScalarFunctionSignature::exact(
-            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        )]
-    }
-}
-
-/// Extract JavaScript variable from HTML
-///
-/// Extracts and parses a JavaScript variable value from HTML script tags.
-/// Handles various cases:
-/// - Simple values: `var x = 10;` -> 10
-/// - JSON objects: `var x = {"key": "value"};` -> {"key": "value"}
-/// - JSON arrays: `var x = [1, 2, 3];` -> [1, 2, 3]
-/// - JSON.parse(): `var x = JSON.parse('...');` -> decoded and parsed JSON
-///
-/// # Arguments
-/// * `html` - HTML content containing script tags
-/// * `var_pattern` - Variable declaration pattern, e.g., "var jobs" or "const data"
-///
-/// # Returns
-/// * JSON - Parsed JSON value, or JSON string if parsing fails
-///
-/// # Examples
-/// ```sql
-/// -- Extract from JSON.parse with hex escapes
-/// SELECT html_extract_js_value(html, 'var jobs') FROM pages;
-///
-/// -- Extract simple JSON object
-/// SELECT html_extract_js_value('<script>var config = {"debug": true};</script>', 'var config');
-/// -- Returns: {"debug":true}
-/// ```
-struct HtmlExtractJsValueFunction;
-
-impl VScalar for HtmlExtractJsValueFunction {
-    type State = ();
-
-    unsafe fn invoke(
-        _state: &Self::State,
-        input: &mut DataChunkHandle,
-        output: &mut dyn WritableVector,
-    ) -> Result<(), Box<dyn Error>> {
-        let size = input.len();
-        let html_vector = input.flat_vector(0);
-        let var_vector = input.flat_vector(1);
-        let mut output_vector = output.flat_vector();
-
-        let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
-        let var_values = var_vector.as_slice_with_len::<duckdb_string_t>(size);
-
-        for i in 0..size {
-            if html_vector.row_is_null(i as u64) || var_vector.row_is_null(i as u64) {
-                output_vector.set_null(i);
-                continue;
-            }
-
-            let html = DuckString::new(&mut { html_values[i] }).as_str().to_string();
-            let var_pattern = DuckString::new(&mut { var_values[i] }).as_str().to_string();
-
-            // Extract script content from HTML
-            let config = HqConfig {
-                selector: "script".to_string(),
-                text_only: true,
-                ..Default::default()
-            };
-
-            let script_content = match process_html(&html, &config) {
-                Ok(content) => content,
-                Err(_) => {
-                    output_vector.set_null(i);
-                    continue;
-                }
-            };
-
-            // Extract the variable value
-            match hq::js_decode::extract_js_variable(&script_content, &var_pattern) {
-                Ok(js_value) => {
-                    let json_str = js_value.to_json_string();
-                    output_vector.insert(i, json_str.as_str());
-                }
-                Err(_) => {
-                    output_vector.set_null(i);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![
-            // html_extract_js_var(html, var_pattern)
+            // html_extract_json(html, selector, var_pattern)
             ScalarFunctionSignature::exact(
                 vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                 ],
@@ -647,10 +344,6 @@ impl VScalar for HtmlExtractJsValueFunction {
 #[duckdb_entrypoint_c_api()]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_scalar_function::<HtmlQueryFunction>("html_query")?;
-    con.register_scalar_function::<HqAttrFunction>("hq_attr")?;
-    con.register_scalar_function::<HqDecodeJsStringFunction>("hq_decode_js_string")?;
-    con.register_scalar_function::<HtmlDecodeFunction>("html_decode")?;
-    con.register_scalar_function::<HtmlEncodeFunction>("html_encode")?;
-    con.register_scalar_function::<HtmlExtractJsValueFunction>("html_extract_js_value")?;
+    con.register_scalar_function::<HtmlExtractJsonFunction>("html_extract_json")?;
     Ok(())
 }

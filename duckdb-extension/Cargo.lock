@@ -857,6 +857,7 @@ dependencies = [
  "hq",
  "htmlescape",
  "libduckdb-sys",
+ "serde_json",
 ]
 
 [[package]]

@@ -4,86 +4,68 @@
 
 # Before we load the extension, this will fail
 statement error
-SELECT hq('<html><title>Test</title></html>', 'title');
+SELECT html_query('<html><title>Test</title></html>', 'title');
 ----
-Catalog Error: Scalar Function with name hq does not exist!
-
-statement error
-SELECT hq_attr('<html><a href="/page">Link</a></html>', 'href', 'a');
-----
-Catalog Error: Scalar Function with name hq_attr does not exist!
+Catalog Error: Scalar Function with name html_query does not exist!
 
 # Require statement will ensure the extension is loaded from now on
 require hq
 
 # Test basic HTML parsing
 query I
-SELECT hq('<html><head><title>Test Page</title></head><body><p>Hello World</p></body></html>', 'title');
+SELECT html_query('<html><head><title>Test Page</title></head></html>', 'title');
 ----
 <title>Test Page</title>
 
 # Test text extraction
 query I
-SELECT hq('<html><body><p>Hello World</p></body></html>', 'p', true);
+SELECT html_query('<html><body><p>Hello World</p></body></html>', 'p', true);
 ----
 Hello World
 
-# Test pretty printing
-query I
-SELECT hq('<html><body><div>Test</div></body></html>', 'div', false, true) LIKE '%Test%';
-----
-true
-
 # Test CSS selectors - class
 query I
-SELECT hq('<html><body><div class="content">Content</div></body></html>', '.content', true);
+SELECT html_query('<html><body><div class="content">Content</div></body></html>', '.content', true);
 ----
 Content
 
 # Test CSS selectors - id
 query I
-SELECT hq('<html><body><div id="main">Main</div></body></html>', '#main', true);
+SELECT html_query('<html><body><div id="main">Main</div></body></html>', '#main', true);
 ----
 Main
 
 # Test CSS selectors - attribute
 query I
-SELECT hq('<html><body><a href="/test">Link</a></body></html>', 'a[href="/test"]', true);
+SELECT html_query('<html><body><a href="/test">Link</a></body></html>', 'a[href="/test"]', true);
 ----
 Link
 
-# Test attribute extraction - href
+# Test CSS pseudo-selectors
 query I
-SELECT hq_attr('<html><body><a href="/page1">Link 1</a><a href="/page2">Link 2</a></body></html>', 'href', 'a');
+SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:last-child', true);
 ----
-[/page1, /page2]
+Third
 
-# Test attribute extraction - src
 query I
-SELECT hq_attr('<html><body><img src="img1.jpg"/><img src="img2.jpg"/></body></html>', 'src', 'img');
+SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:first-child', true);
 ----
-[img1.jpg, img2.jpg]
+First
 
-# Test attribute extraction with selector
 query I
-SELECT hq_attr('<html><body><a class="external" href="/ext">Ext</a><a href="/int">Int</a></body></html>', 'href', 'a.external');
+SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:nth-child(2)', true);
 ----
-[/ext]
+Second
 
 # Test with NULL input
 query I
-SELECT hq(NULL, 'title');
-----
-NULL
-
-query I
-SELECT hq_attr(NULL, 'href', 'a');
+SELECT html_query(NULL, 'title');
 ----
 NULL
 
 # Test with default selector using single parameter
 query I
-SELECT hq('<html><head><title>Test</title></head></html>') LIKE '%<title>Test</title>%';
+SELECT html_query('<html><head><title>Test</title></head></html>') LIKE '%<title>Test</title>%';
 ----
 true
 
@@ -93,48 +75,49 @@ CREATE TABLE pages AS SELECT '<html><head><title>Page 1</title></head></html>' a
 UNION ALL SELECT '<html><head><title>Page 2</title></head></html>' as html;
 
 query I
-SELECT hq(html, 'title', true) FROM pages ORDER BY 1;
+SELECT html_query(html, 'title', true) FROM pages ORDER BY 1;
 ----
 Page 1
 Page 2
 
-# Test LD+JSON extraction
-query I
-SELECT hq('<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget"}</script></head></html>', 'script[type="application/ld+json"]', true) LIKE '%Widget%';
-----
-true
-
-# Test multiple elements
-query I
-SELECT length(hq('<html><body><p>One</p><p>Two</p></body></html>', 'p')) > 10;
-----
-true
-
 # Test nested selectors
 query I
-SELECT hq('<html><body><div><span>Nested</span></div></body></html>', 'div > span', true);
+SELECT html_query('<html><body><div><span>Nested</span></div></body></html>', 'div > span', true);
 ----
 Nested
 
-# Test with complex HTML
-statement ok
-CREATE TABLE products AS
-SELECT '<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget A","price":"19.99"}</script></head></html>' as html
-UNION ALL SELECT '<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget B","price":"24.99"}</script></head></html>' as html;
+# Test html_extract_json with LD+JSON
+query I
+SELECT html_extract_json('<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget"}</script></head></html>', 'script[type="application/ld+json"]') LIKE '%Widget%';
+----
+true
 
+# Test html_extract_json parses and returns valid JSON
 query II
 SELECT
-  json_extract(trim(hq(html, 'script[type="application/ld+json"]', true)), '$.name') as name,
-  json_extract(trim(hq(html, 'script[type="application/ld+json"]', true)), '$.price') as price
-FROM products
-ORDER BY name;
+  json_extract_string(html_extract_json('<html><head><script type="application/ld+json">{"name":"Widget A","price":"19.99"}</script></head></html>', 'script[type="application/ld+json"]'), '$.name') as name,
+  json_extract_string(html_extract_json('<html><head><script type="application/ld+json">{"name":"Widget A","price":"19.99"}</script></head></html>', 'script[type="application/ld+json"]'), '$.price') as price;
 ----
-"Widget A"	"19.99"
-"Widget B"	"24.99"
+Widget A	19.99
+
+# Test html_extract_json with JS variable
+query I
+SELECT html_extract_json('<html><script>var config = {"debug": true};</script></html>', 'script', 'var config');
+----
+{"debug":true}
+
+# Test html_extract_json decodes HTML entities in LD+JSON
+query I
+SELECT json_extract_string(html_extract_json('<html><script type="application/ld+json">{"title":"Test &amp; Demo"}</script></html>', 'script[type="application/ld+json"]'), '$.title');
+----
+Test & Demo
+
+# Test html_extract_json with NULL
+query I
+SELECT html_extract_json(NULL, 'script');
+----
+NULL
 
 # Cleanup
 statement ok
 DROP TABLE pages;
-
-statement ok
-DROP TABLE products;
