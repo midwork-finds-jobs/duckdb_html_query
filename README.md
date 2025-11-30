@@ -59,7 +59,7 @@ curl -s https://example.com | ./target/release/hq --attribute href 'a'
 ### From Source
 
 ```sh
-cargo install --git https://github.com/midwork-finds-jobs/hq --features cli
+cargo install --git https://github.com/midwork-finds-jobs/duckdb_html_query --features cli
 ```
 
 ## License
