@@ -70,7 +70,7 @@ jobs:
 
       - name: Build extension
         working-directory: duckdb-extension
-        run: make release
+        run: make configure && make release
 
       - name: Upload extension artifact
         uses: actions/upload-artifact@v4
