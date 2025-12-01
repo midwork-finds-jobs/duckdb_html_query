@@ -92,23 +92,23 @@ SELECT html_extract_json('<html><head><script type="application/ld+json">{"@type
 ----
 true
 
-# Test html_extract_json parses and returns valid JSON
+# Test html_extract_json parses and returns valid JSON (returns array)
 query II
 SELECT
-  json_extract_string(html_extract_json('<html><head><script type="application/ld+json">{"name":"Widget A","price":"19.99"}</script></head></html>', 'script[type="application/ld+json"]'), '$.name') as name,
-  json_extract_string(html_extract_json('<html><head><script type="application/ld+json">{"name":"Widget A","price":"19.99"}</script></head></html>', 'script[type="application/ld+json"]'), '$.price') as price;
+  json_extract_string(html_extract_json('<html><head><script type="application/ld+json">{"name":"Widget A","price":"19.99"}</script></head></html>', 'script[type="application/ld+json"]'), '$[0].name') as name,
+  json_extract_string(html_extract_json('<html><head><script type="application/ld+json">{"name":"Widget A","price":"19.99"}</script></head></html>', 'script[type="application/ld+json"]'), '$[0].price') as price;
 ----
 Widget A	19.99
 
-# Test html_extract_json with JS variable
+# Test html_extract_json with JS variable (returns array)
 query I
 SELECT html_extract_json('<html><script>var config = {"debug": true};</script></html>', 'script', 'var config');
 ----
-{"debug":true}
+[{"debug":true}]
 
 # Test html_extract_json decodes HTML entities in LD+JSON
 query I
-SELECT json_extract_string(html_extract_json('<html><script type="application/ld+json">{"title":"Test &amp; Demo"}</script></html>', 'script[type="application/ld+json"]'), '$.title');
+SELECT json_extract_string(html_extract_json('<html><script type="application/ld+json">{"title":"Test &amp; Demo"}</script></html>', 'script[type="application/ld+json"]'), '$[0].title');
 ----
 Test & Demo
 
