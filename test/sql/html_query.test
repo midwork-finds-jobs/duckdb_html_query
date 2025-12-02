@@ -86,6 +86,24 @@ SELECT html_query('<html><body><div><span>Nested</span></div></body></html>', 'd
 ----
 Nested
 
+# Test html_query_all returns VARCHAR[]
+query I
+SELECT html_query_all('<div><p>First</p><p>Second</p></div>', 'p', true);
+----
+[First, Second]
+
+# Test html_query_all with list functions
+query I
+SELECT list_extract(html_query_all('<div><p>A</p><p>B</p><p>C</p></div>', 'p', true), 2);
+----
+B
+
+# Test html_query_all empty result
+query I
+SELECT html_query_all('<div><p>Only</p></div>', 'span', true);
+----
+[]
+
 # Test html_extract_json with LD+JSON
 query I
 SELECT html_extract_json('<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget"}</script></head></html>', 'script[type="application/ld+json"]') LIKE '%Widget%';

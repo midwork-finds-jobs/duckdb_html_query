@@ -14,7 +14,7 @@ LOAD html_query;
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `html_query(html, selector?, text_only?)` | VARCHAR | First matching element |
-| `html_query_all(html, selector?, text_only?)` | JSON array | All matching elements |
+| `html_query_all(html, selector?, text_only?)` | VARCHAR[] | All matching elements as list |
 | `html_extract_json(html, selector, var_pattern?)` | JSON array | JSON from script tags |
 
 ## Usage
@@ -38,13 +38,17 @@ SELECT html_query(html, '.nonexistent', true) FROM pages;
 ### html_query_all - All matching elements
 
 ```sql
--- Get all paragraphs as JSON array
+-- Get all paragraphs as native list
 SELECT html_query_all(html, 'p', true) FROM pages;
--- Returns: ["First paragraph", "Second paragraph"]
+-- Returns: [First paragraph, Second paragraph]
 
--- Access specific element
-SELECT html_query_all(html, 'p', true)->>1 FROM pages;
+-- Access specific element (1-indexed)
+SELECT list_extract(html_query_all(html, 'p', true), 2) FROM pages;
 -- Returns: "Second paragraph"
+
+-- Use with list functions
+SELECT len(html_query_all(html, 'a', true)) FROM pages;
+-- Returns: 5
 ```
 
 ### html_extract_json - Extract JSON from scripts

@@ -149,9 +149,9 @@ impl VScalar for HtmlQueryFunction {
     }
 }
 
-/// HTML query all scalar function - returns JSON array of all matching elements
+/// HTML query all scalar function - returns VARCHAR[] of all matching elements
 ///
-/// Extracts all HTML elements matching CSS selector as JSON array.
+/// Extracts all HTML elements matching CSS selector as a list.
 ///
 /// # Arguments
 /// * `html` - VARCHAR containing HTML content
@@ -159,12 +159,12 @@ impl VScalar for HtmlQueryFunction {
 /// * `text_only` - Optional BOOLEAN to extract text only (default: false)
 ///
 /// # Returns
-/// * VARCHAR - JSON array of all matching elements
+/// * VARCHAR[] - Array of all matching elements
 ///
 /// # Examples
 /// ```sql
 /// SELECT html_query_all(html, 'p', true) FROM pages;
-/// -- Returns: ["First paragraph", "Second paragraph"]
+/// -- Returns: ['First paragraph', 'Second paragraph']
 /// ```
 struct HtmlQueryAllFunction;
 
@@ -178,7 +178,6 @@ impl VScalar for HtmlQueryAllFunction {
     ) -> std::result::Result<(), Box<dyn Error>> {
         let size = input.len();
         let html_vector = input.flat_vector(0);
-        let mut output_vector = output.flat_vector();
 
         let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
         let html_contents: Vec<String> = html_values
@@ -224,9 +223,13 @@ impl VScalar for HtmlQueryAllFunction {
             vec![false; size]
         };
 
+        // Collect all results first to calculate total capacity
+        let mut all_results: Vec<Vec<String>> = Vec::with_capacity(size);
+        let mut total_elements = 0;
+
         for i in 0..size {
             if html_vector.row_is_null(i as u64) {
-                output_vector.set_null(i);
+                all_results.push(Vec::new());
                 continue;
             }
 
@@ -239,18 +242,38 @@ impl VScalar for HtmlQueryAllFunction {
             let text_only = text_only_flags[i];
 
             match extract_all_elements(&html_contents[i], selector, text_only) {
-                Ok(elements) if elements.is_empty() => {
-                    output_vector.insert(i, "[]");
+                Ok(elements) => {
+                    total_elements += elements.len();
+                    all_results.push(elements);
                 }
-                Ok(elements) => match serde_json::to_string(&elements) {
-                    Ok(json) => output_vector.insert(i, &json),
-                    Err(_) => output_vector.set_null(i),
-                },
                 Err(_) => {
-                    output_vector.set_null(i);
+                    all_results.push(Vec::new());
                 }
             }
         }
+
+        // Now populate the list vector
+        let mut list_vector = output.list_vector();
+        let child_vector = list_vector.child(total_elements);
+
+        let mut current_offset = 0;
+        for (i, elements) in all_results.iter().enumerate() {
+            if html_vector.row_is_null(i as u64) {
+                list_vector.set_null(i);
+                continue;
+            }
+
+            // Insert each element into child vector
+            for (j, element) in elements.iter().enumerate() {
+                child_vector.insert(current_offset + j, element.as_str());
+            }
+
+            // Set the entry offset and length
+            list_vector.set_entry(i, current_offset, elements.len());
+            current_offset += elements.len();
+        }
+
+        list_vector.set_len(total_elements);
 
         Ok(())
     }
@@ -260,7 +283,7 @@ impl VScalar for HtmlQueryAllFunction {
             // html_query_all(html)
             ScalarFunctionSignature::exact(
                 vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
-                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),
             // html_query_all(html, selector)
             ScalarFunctionSignature::exact(
@@ -268,7 +291,7 @@ impl VScalar for HtmlQueryAllFunction {
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                 ],
-                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),
             // html_query_all(html, selector, text_only)
             ScalarFunctionSignature::exact(
@@ -277,7 +300,7 @@ impl VScalar for HtmlQueryAllFunction {
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Boolean),
                 ],
-                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),
         ]
     }
