@@ -19,41 +19,41 @@ SELECT html_query('<html><head><title>Test Page</title></head></html>', 'title')
 
 # Test text extraction
 query I
-SELECT html_query('<html><body><p>Hello World</p></body></html>', 'p', true);
+SELECT html_query('<html><body><p>Hello World</p></body></html>', 'p', '@text');
 ----
 Hello World
 
 # Test CSS selectors - class
 query I
-SELECT html_query('<html><body><div class="content">Content</div></body></html>', '.content', true);
+SELECT html_query('<html><body><div class="content">Content</div></body></html>', '.content', '@text');
 ----
 Content
 
 # Test CSS selectors - id
 query I
-SELECT html_query('<html><body><div id="main">Main</div></body></html>', '#main', true);
+SELECT html_query('<html><body><div id="main">Main</div></body></html>', '#main', '@text');
 ----
 Main
 
 # Test CSS selectors - attribute
 query I
-SELECT html_query('<html><body><a href="/test">Link</a></body></html>', 'a[href="/test"]', true);
+SELECT html_query('<html><body><a href="/test">Link</a></body></html>', 'a[href="/test"]', '@text');
 ----
 Link
 
 # Test CSS pseudo-selectors
 query I
-SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:last-child', true);
+SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:last-child', '@text');
 ----
 Third
 
 query I
-SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:first-child', true);
+SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:first-child', '@text');
 ----
 First
 
 query I
-SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:nth-child(2)', true);
+SELECT html_query('<div><p>First</p><p>Second</p><p>Third</p></div>', 'p:nth-child(2)', '@text');
 ----
 Second
 
@@ -75,34 +75,52 @@ CREATE TABLE pages AS SELECT '<html><head><title>Page 1</title></head></html>' a
 UNION ALL SELECT '<html><head><title>Page 2</title></head></html>' as html;
 
 query I
-SELECT html_query(html, 'title', true) FROM pages ORDER BY 1;
+SELECT html_query(html, 'title', '@text') FROM pages ORDER BY 1;
 ----
 Page 1
 Page 2
 
 # Test nested selectors
 query I
-SELECT html_query('<html><body><div><span>Nested</span></div></body></html>', 'div > span', true);
+SELECT html_query('<html><body><div><span>Nested</span></div></body></html>', 'div > span', '@text');
 ----
 Nested
 
 # Test html_query_all returns VARCHAR[]
 query I
-SELECT html_query_all('<div><p>First</p><p>Second</p></div>', 'p', true);
+SELECT html_query_all('<div><p>First</p><p>Second</p></div>', 'p', '@text');
 ----
 [First, Second]
 
 # Test html_query_all with list functions
 query I
-SELECT list_extract(html_query_all('<div><p>A</p><p>B</p><p>C</p></div>', 'p', true), 2);
+SELECT list_extract(html_query_all('<div><p>A</p><p>B</p><p>C</p></div>', 'p', '@text'), 2);
 ----
 B
 
 # Test html_query_all empty result
 query I
-SELECT html_query_all('<div><p>Only</p></div>', 'span', true);
+SELECT html_query_all('<div><p>Only</p></div>', 'span', '@text');
 ----
 []
+
+# Test attribute extraction - href
+query I
+SELECT html_query('<a href="/page">Link</a>', 'a', '@href');
+----
+/page
+
+# Test attribute extraction - data attribute
+query I
+SELECT html_query('<div data-test-id="submit-btn">Submit</div>', 'div', 'data-test-id');
+----
+submit-btn
+
+# Test html_query_all with href extraction
+query I
+SELECT html_query_all('<nav><a href="/home">Home</a><a href="/about">About</a></nav>', 'a', '@href');
+----
+[/home, /about]
 
 # Test html_extract_json with LD+JSON
 query I

@@ -2,7 +2,9 @@ extern crate duckdb;
 extern crate duckdb_loadable_macros;
 extern crate libduckdb_sys;
 
-use crate::{extract_all_elements, extract_all_text, js_decode, process_html, HqConfig};
+use crate::{
+    extract_all_text, extract_all_with_mode, js_decode, process_html, ExtractMode, HqConfig,
+};
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     ffi,
@@ -22,14 +24,21 @@ use std::error::Error;
 /// # Arguments
 /// * `html` - VARCHAR containing HTML content
 /// * `selector` - Optional VARCHAR with CSS selector (default: ":root")
-/// * `text_only` - Optional BOOLEAN to extract text only (default: false)
+/// * `extract` - Optional VARCHAR specifying what to extract:
+///   - NULL or omitted: full HTML
+///   - '@text' or 'text': inner text content
+///   - '@href', '@src', etc: attribute value
+///   - 'href', 'data-id', etc: attribute value (@ prefix optional)
 ///
 /// # Returns
-/// * VARCHAR - First matching element, or NULL if no match
+/// * VARCHAR - First matching element/attribute, or NULL if no match
 ///
 /// # Examples
 /// ```sql
-/// SELECT html_query(html, 'title', true) FROM pages;
+/// SELECT html_query(html, 'a', '@href') FROM pages;
+/// -- Returns: "/path/to/page"
+///
+/// SELECT html_query(html, 'title', '@text') FROM pages;
 /// -- Returns: "Page Title"
 /// ```
 struct HtmlQueryFunction;
@@ -73,21 +82,24 @@ impl VScalar for HtmlQueryFunction {
             vec![None; size]
         };
 
-        // Get text_only flag (optional, column 2)
-        let text_only_flags: Vec<bool> = if input.num_columns() > 2 {
-            let text_only_vector = input.flat_vector(2);
-            let text_only_values = text_only_vector.as_slice_with_len::<bool>(size);
+        // Get extract mode (optional, column 2)
+        let extract_modes: Vec<ExtractMode> = if input.num_columns() > 2 {
+            let extract_vector = input.flat_vector(2);
+            let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
             (0..size)
                 .map(|i| {
-                    if text_only_vector.row_is_null(i as u64) {
-                        false
+                    if extract_vector.row_is_null(i as u64) {
+                        ExtractMode::Html
                     } else {
-                        text_only_values[i]
+                        let s = DuckString::new(&mut { extract_values[i] })
+                            .as_str()
+                            .to_string();
+                        ExtractMode::from_attr(Some(&s))
                     }
                 })
                 .collect()
         } else {
-            vec![false; size]
+            vec![ExtractMode::Html; size]
         };
 
         for i in 0..size {
@@ -102,9 +114,9 @@ impl VScalar for HtmlQueryFunction {
                 .map(|s| s.as_str())
                 .unwrap_or(":root");
 
-            let text_only = text_only_flags[i];
+            let mode = &extract_modes[i];
 
-            match extract_all_elements(&html_contents[i], selector, text_only) {
+            match extract_all_with_mode(&html_contents[i], selector, mode) {
                 Ok(elements) if elements.is_empty() => {
                     output_vector.set_null(i);
                 }
@@ -136,12 +148,12 @@ impl VScalar for HtmlQueryFunction {
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-            // html_query(html, selector, text_only)
+            // html_query(html, selector, extract)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                    LogicalTypeHandle::from(LogicalTypeId::Boolean),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
@@ -156,14 +168,21 @@ impl VScalar for HtmlQueryFunction {
 /// # Arguments
 /// * `html` - VARCHAR containing HTML content
 /// * `selector` - Optional VARCHAR with CSS selector (default: ":root")
-/// * `text_only` - Optional BOOLEAN to extract text only (default: false)
+/// * `extract` - Optional VARCHAR specifying what to extract:
+///   - NULL or omitted: full HTML
+///   - '@text' or 'text': inner text content
+///   - '@href', '@src', etc: attribute value
+///   - 'href', 'data-id', etc: attribute value (@ prefix optional)
 ///
 /// # Returns
-/// * VARCHAR[] - Array of all matching elements
+/// * VARCHAR[] - Array of all matching elements/attributes
 ///
 /// # Examples
 /// ```sql
-/// SELECT html_query_all(html, 'p', true) FROM pages;
+/// SELECT html_query_all(html, 'a', '@href') FROM pages;
+/// -- Returns: ['/page1', '/page2', '/page3']
+///
+/// SELECT html_query_all(html, 'p', '@text') FROM pages;
 /// -- Returns: ['First paragraph', 'Second paragraph']
 /// ```
 struct HtmlQueryAllFunction;
@@ -206,21 +225,24 @@ impl VScalar for HtmlQueryAllFunction {
             vec![None; size]
         };
 
-        // Get text_only flag (optional, column 2)
-        let text_only_flags: Vec<bool> = if input.num_columns() > 2 {
-            let text_only_vector = input.flat_vector(2);
-            let text_only_values = text_only_vector.as_slice_with_len::<bool>(size);
+        // Get extract mode (optional, column 2)
+        let extract_modes: Vec<ExtractMode> = if input.num_columns() > 2 {
+            let extract_vector = input.flat_vector(2);
+            let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
             (0..size)
                 .map(|i| {
-                    if text_only_vector.row_is_null(i as u64) {
-                        false
+                    if extract_vector.row_is_null(i as u64) {
+                        ExtractMode::Html
                     } else {
-                        text_only_values[i]
+                        let s = DuckString::new(&mut { extract_values[i] })
+                            .as_str()
+                            .to_string();
+                        ExtractMode::from_attr(Some(&s))
                     }
                 })
                 .collect()
         } else {
-            vec![false; size]
+            vec![ExtractMode::Html; size]
         };
 
         // Collect all results first to calculate total capacity
@@ -239,9 +261,9 @@ impl VScalar for HtmlQueryAllFunction {
                 .map(|s| s.as_str())
                 .unwrap_or(":root");
 
-            let text_only = text_only_flags[i];
+            let mode = &extract_modes[i];
 
-            match extract_all_elements(&html_contents[i], selector, text_only) {
+            match extract_all_with_mode(&html_contents[i], selector, mode) {
                 Ok(elements) => {
                     total_elements += elements.len();
                     all_results.push(elements);
@@ -293,12 +315,12 @@ impl VScalar for HtmlQueryAllFunction {
                 ],
                 LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),
-            // html_query_all(html, selector, text_only)
+            // html_query_all(html, selector, extract)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
-                    LogicalTypeHandle::from(LogicalTypeId::Boolean),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
                 ],
                 LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),

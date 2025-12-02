@@ -87,11 +87,51 @@ pub fn extract_all_text(html: &str, selector: &str) -> Result<Vec<String>, Box<d
     Ok(results)
 }
 
+/// Extraction mode for html_query functions
+#[derive(Debug, Clone)]
+pub enum ExtractMode {
+    /// Return full HTML of element
+    Html,
+    /// Return text content only
+    Text,
+    /// Return specific attribute value
+    Attribute(String),
+}
+
+impl ExtractMode {
+    /// Parse extraction mode from optional attribute string
+    /// None or empty -> Html
+    /// "@text" or "text" -> Text
+    /// "@attr" -> Attribute(attr)
+    pub fn from_attr(attr: Option<&str>) -> Self {
+        match attr {
+            None | Some("") => ExtractMode::Html,
+            Some("@text") | Some("text") => ExtractMode::Text,
+            Some(s) if s.starts_with('@') => ExtractMode::Attribute(s[1..].to_string()),
+            Some(s) => ExtractMode::Attribute(s.to_string()),
+        }
+    }
+}
+
 /// Extract all elements matching selector, returning each as separate string (HTML or text)
 pub fn extract_all_elements(
     html: &str,
     selector: &str,
     text_only: bool,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let mode = if text_only {
+        ExtractMode::Text
+    } else {
+        ExtractMode::Html
+    };
+    extract_all_with_mode(html, selector, &mode)
+}
+
+/// Extract all elements matching selector with specified extraction mode
+pub fn extract_all_with_mode(
+    html: &str,
+    selector: &str,
+    mode: &ExtractMode,
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let document = kuchikiki::parse_html().one(html);
     let mut results = Vec::new();
@@ -100,10 +140,20 @@ pub fn extract_all_elements(
         .select(selector)
         .map_err(|_| "Failed to parse CSS selector")?
     {
-        let content = if text_only {
-            serialize_text(node.as_node(), false).trim().to_string()
-        } else {
-            node.as_node().to_string()
+        let content = match mode {
+            ExtractMode::Text => serialize_text(node.as_node(), false).trim().to_string(),
+            ExtractMode::Html => node.as_node().to_string(),
+            ExtractMode::Attribute(attr) => {
+                if let Some(element) = node.as_node().as_element() {
+                    if let Ok(attrs) = element.attributes.try_borrow() {
+                        attrs.get(attr.as_str()).unwrap_or("").to_string()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            }
         };
         if !content.is_empty() {
             results.push(content);
