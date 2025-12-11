@@ -28,6 +28,7 @@ The `extract` parameter specifies what to extract from matched elements:
 | `@href`, `href` | href attribute |
 | `@src`, `src` | src attribute |
 | `data-test-id` | Any attribute name |
+| `['@href', '@text']` | Multiple attributes as JSON object |
 
 ## Usage
 
@@ -69,6 +70,10 @@ SELECT list_extract(html_query_all(html, 'a', '@href'), 2) FROM pages;
 -- Count links
 SELECT len(html_query_all(html, 'a', '@href')) FROM pages;
 -- Returns: 5
+
+-- Extract multiple attributes as JSON objects
+SELECT html_query_all(html, 'a', ['@href', '@text']) FROM pages;
+-- Returns: [{"href":"/home","text":"Home"}, {"href":"/about","text":"About"}]
 ```
 
 ### html_extract_json - Extract JSON from scripts

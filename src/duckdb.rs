@@ -14,8 +14,46 @@ use duckdb::{
     Connection, Result,
 };
 use duckdb_loadable_macros::duckdb_entrypoint_c_api;
-use libduckdb_sys::duckdb_string_t;
+use libduckdb_sys::{
+    duckdb_data_chunk_get_vector, duckdb_list_entry, duckdb_list_vector_get_child, duckdb_string_t,
+    duckdb_vector_get_data,
+};
 use std::error::Error;
+
+/// Read a list of strings from a list vector at given row index
+unsafe fn read_string_list(
+    input: &mut DataChunkHandle,
+    col_idx: usize,
+    row_idx: usize,
+    chunk_size: usize,
+) -> Vec<String> {
+    // Get raw vector pointer
+    let list_vec_ptr = duckdb_data_chunk_get_vector(input.get_ptr(), col_idx as u64);
+
+    // Get list entries (offset/length pairs)
+    let entries_ptr = duckdb_vector_get_data(list_vec_ptr) as *const duckdb_list_entry;
+    let entries = std::slice::from_raw_parts(entries_ptr, chunk_size);
+
+    let entry = &entries[row_idx];
+    let offset = entry.offset as usize;
+    let length = entry.length as usize;
+
+    if length == 0 {
+        return Vec::new();
+    }
+
+    // Get child vector (contains the actual strings)
+    let child_vec_ptr = duckdb_list_vector_get_child(list_vec_ptr);
+    let child_data_ptr = duckdb_vector_get_data(child_vec_ptr) as *const duckdb_string_t;
+
+    // Read strings from offset to offset+length
+    (offset..offset + length)
+        .map(|i| {
+            let str_ptr = child_data_ptr.add(i);
+            DuckString::new(&mut { *str_ptr }).as_str().to_string()
+        })
+        .collect()
+}
 
 /// HTML query scalar function - returns first matching element
 ///
@@ -24,11 +62,11 @@ use std::error::Error;
 /// # Arguments
 /// * `html` - VARCHAR containing HTML content
 /// * `selector` - Optional VARCHAR with CSS selector (default: ":root")
-/// * `extract` - Optional VARCHAR specifying what to extract:
+/// * `extract` - Optional VARCHAR or VARCHAR[] specifying what to extract:
 ///   - NULL or omitted: full HTML
 ///   - '@text' or 'text': inner text content
 ///   - '@href', '@src', etc: attribute value
-///   - 'href', 'data-id', etc: attribute value (@ prefix optional)
+///   - ['@href', '@text']: multiple attributes as JSON object
 ///
 /// # Returns
 /// * VARCHAR - First matching element/attribute, or NULL if no match
@@ -38,8 +76,8 @@ use std::error::Error;
 /// SELECT html_query(html, 'a', '@href') FROM pages;
 /// -- Returns: "/path/to/page"
 ///
-/// SELECT html_query(html, 'title', '@text') FROM pages;
-/// -- Returns: "Page Title"
+/// SELECT html_query(html, 'a', ['@href', '@text']) FROM pages;
+/// -- Returns: {"href": "/path", "text": "Link"}
 /// ```
 struct HtmlQueryFunction;
 
@@ -82,22 +120,41 @@ impl VScalar for HtmlQueryFunction {
             vec![None; size]
         };
 
-        // Get extract mode (optional, column 2)
+        // Get extract mode (optional, column 2) - can be VARCHAR or VARCHAR[]
         let extract_modes: Vec<ExtractMode> = if input.num_columns() > 2 {
-            let extract_vector = input.flat_vector(2);
-            let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
-            (0..size)
-                .map(|i| {
-                    if extract_vector.row_is_null(i as u64) {
-                        ExtractMode::Html
-                    } else {
-                        let s = DuckString::new(&mut { extract_values[i] })
-                            .as_str()
-                            .to_string();
-                        ExtractMode::from_attr(Some(&s))
-                    }
-                })
-                .collect()
+            let col_type = input.flat_vector(2).logical_type();
+            let is_list = col_type.id() == LogicalTypeId::List;
+
+            if is_list {
+                // VARCHAR[] - multi-attribute mode
+                let list_entries_vector = input.flat_vector(2);
+                (0..size)
+                    .map(|i| {
+                        if list_entries_vector.row_is_null(i as u64) {
+                            ExtractMode::Html
+                        } else {
+                            let attrs = read_string_list(input, 2, i, size);
+                            ExtractMode::from_attr_list(&attrs)
+                        }
+                    })
+                    .collect()
+            } else {
+                // VARCHAR - single attribute mode
+                let extract_vector = input.flat_vector(2);
+                let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
+                (0..size)
+                    .map(|i| {
+                        if extract_vector.row_is_null(i as u64) {
+                            ExtractMode::Html
+                        } else {
+                            let s = DuckString::new(&mut { extract_values[i] })
+                                .as_str()
+                                .to_string();
+                            ExtractMode::from_attr(Some(&s))
+                        }
+                    })
+                    .collect()
+            }
         } else {
             vec![ExtractMode::Html; size]
         };
@@ -157,6 +214,15 @@ impl VScalar for HtmlQueryFunction {
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
+            // html_query(html, selector, extract[])
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
         ]
     }
 }
@@ -168,11 +234,11 @@ impl VScalar for HtmlQueryFunction {
 /// # Arguments
 /// * `html` - VARCHAR containing HTML content
 /// * `selector` - Optional VARCHAR with CSS selector (default: ":root")
-/// * `extract` - Optional VARCHAR specifying what to extract:
+/// * `extract` - Optional VARCHAR or VARCHAR[] specifying what to extract:
 ///   - NULL or omitted: full HTML
 ///   - '@text' or 'text': inner text content
 ///   - '@href', '@src', etc: attribute value
-///   - 'href', 'data-id', etc: attribute value (@ prefix optional)
+///   - ['@href', '@text']: multiple attributes as JSON objects
 ///
 /// # Returns
 /// * VARCHAR[] - Array of all matching elements/attributes
@@ -182,8 +248,8 @@ impl VScalar for HtmlQueryFunction {
 /// SELECT html_query_all(html, 'a', '@href') FROM pages;
 /// -- Returns: ['/page1', '/page2', '/page3']
 ///
-/// SELECT html_query_all(html, 'p', '@text') FROM pages;
-/// -- Returns: ['First paragraph', 'Second paragraph']
+/// SELECT html_query_all(html, 'a', ['@href', '@text']) FROM pages;
+/// -- Returns: ['{"href":"/page1","text":"Link 1"}', '{"href":"/page2","text":"Link 2"}']
 /// ```
 struct HtmlQueryAllFunction;
 
@@ -225,22 +291,41 @@ impl VScalar for HtmlQueryAllFunction {
             vec![None; size]
         };
 
-        // Get extract mode (optional, column 2)
+        // Get extract mode (optional, column 2) - can be VARCHAR or VARCHAR[]
         let extract_modes: Vec<ExtractMode> = if input.num_columns() > 2 {
-            let extract_vector = input.flat_vector(2);
-            let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
-            (0..size)
-                .map(|i| {
-                    if extract_vector.row_is_null(i as u64) {
-                        ExtractMode::Html
-                    } else {
-                        let s = DuckString::new(&mut { extract_values[i] })
-                            .as_str()
-                            .to_string();
-                        ExtractMode::from_attr(Some(&s))
-                    }
-                })
-                .collect()
+            let col_type = input.flat_vector(2).logical_type();
+            let is_list = col_type.id() == LogicalTypeId::List;
+
+            if is_list {
+                // VARCHAR[] - multi-attribute mode
+                let list_entries_vector = input.flat_vector(2);
+                (0..size)
+                    .map(|i| {
+                        if list_entries_vector.row_is_null(i as u64) {
+                            ExtractMode::Html
+                        } else {
+                            let attrs = read_string_list(input, 2, i, size);
+                            ExtractMode::from_attr_list(&attrs)
+                        }
+                    })
+                    .collect()
+            } else {
+                // VARCHAR - single attribute mode
+                let extract_vector = input.flat_vector(2);
+                let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
+                (0..size)
+                    .map(|i| {
+                        if extract_vector.row_is_null(i as u64) {
+                            ExtractMode::Html
+                        } else {
+                            let s = DuckString::new(&mut { extract_values[i] })
+                                .as_str()
+                                .to_string();
+                            ExtractMode::from_attr(Some(&s))
+                        }
+                    })
+                    .collect()
+            }
         } else {
             vec![ExtractMode::Html; size]
         };
@@ -321,6 +406,15 @@ impl VScalar for HtmlQueryAllFunction {
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+            ),
+            // html_query_all(html, selector, extract[])
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
                 ],
                 LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),

@@ -122,6 +122,18 @@ SELECT html_query_all('<nav><a href="/home">Home</a><a href="/about">About</a></
 ----
 [/home, /about]
 
+# Test multi-attribute extraction with html_query
+query I
+SELECT html_query('<a href="/page" class="link">Click me</a>', 'a', ['@href', '@text']);
+----
+{"href":"/page","text":"Click me"}
+
+# Test multi-attribute extraction with html_query_all
+query I
+SELECT html_query_all('<nav><a href="/home">Home</a><a href="/about">About</a></nav>', 'a', ['@href', '@text']);
+----
+['{"href":"/home","text":"Home"}', '{"href":"/about","text":"About"}']
+
 # Test html_extract_json with LD+JSON
 query I
 SELECT html_extract_json('<html><head><script type="application/ld+json">{"@type":"Product","name":"Widget"}</script></head></html>', 'script[type="application/ld+json"]') LIKE '%Widget%';

@@ -96,6 +96,8 @@ pub enum ExtractMode {
     Text,
     /// Return specific attribute value
     Attribute(String),
+    /// Return multiple attributes as JSON object
+    MultiAttribute(Vec<String>),
 }
 
 impl ExtractMode {
@@ -109,6 +111,30 @@ impl ExtractMode {
             Some("@text") | Some("text") => ExtractMode::Text,
             Some(s) if s.starts_with('@') => ExtractMode::Attribute(s[1..].to_string()),
             Some(s) => ExtractMode::Attribute(s.to_string()),
+        }
+    }
+
+    /// Parse extraction mode from list of attributes
+    /// Returns MultiAttribute for multiple attrs, or single mode for one
+    pub fn from_attr_list(attrs: &[String]) -> Self {
+        match attrs.len() {
+            0 => ExtractMode::Html,
+            1 => Self::from_attr(Some(&attrs[0])),
+            _ => {
+                let normalized: Vec<String> = attrs
+                    .iter()
+                    .map(|s| {
+                        if s == "@text" || s == "text" {
+                            "@text".to_string() // special marker for text
+                        } else if let Some(stripped) = s.strip_prefix('@') {
+                            stripped.to_string()
+                        } else {
+                            s.clone()
+                        }
+                    })
+                    .collect();
+                ExtractMode::MultiAttribute(normalized)
+            }
         }
     }
 }
@@ -153,6 +179,24 @@ pub fn extract_all_with_mode(
                 } else {
                     String::new()
                 }
+            }
+            ExtractMode::MultiAttribute(attr_list) => {
+                let mut obj = serde_json::Map::new();
+                if let Some(element) = node.as_node().as_element() {
+                    if let Ok(attrs) = element.attributes.try_borrow() {
+                        for attr in attr_list {
+                            let value = if attr == "@text" {
+                                serialize_text(node.as_node(), false).trim().to_string()
+                            } else {
+                                attrs.get(attr.as_str()).unwrap_or("").to_string()
+                            };
+                            // Use "text" as key for @text
+                            let key = if attr == "@text" { "text" } else { attr };
+                            obj.insert(key.to_string(), serde_json::Value::String(value));
+                        }
+                    }
+                }
+                serde_json::to_string(&obj).unwrap_or_default()
             }
         };
         if !content.is_empty() {
