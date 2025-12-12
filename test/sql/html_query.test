@@ -166,6 +166,24 @@ SELECT html_extract_json(NULL, 'script');
 ----
 NULL
 
+# Test BLOB input with html_query
+query I
+SELECT html_query('<p>Hello</p>'::BLOB, 'p', '@text');
+----
+Hello
+
+# Test BLOB input with html_query_all
+query I
+SELECT html_query_all('<div><p>A</p><p>B</p></div>'::BLOB, 'p', '@text');
+----
+[A, B]
+
+# Test BLOB input with html_extract_json
+query I
+SELECT html_extract_json('<html><script type="application/ld+json">{"name":"Test"}</script></html>'::BLOB, 'script[type="application/ld+json"]');
+----
+[{"name":"Test"}]
+
 # Cleanup
 statement ok
 DROP TABLE pages;

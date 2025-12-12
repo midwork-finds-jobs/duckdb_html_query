@@ -192,12 +192,17 @@ impl VScalar for HtmlQueryFunction {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![
-            // html_query(html)
+            // html_query(html VARCHAR)
             ScalarFunctionSignature::exact(
                 vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-            // html_query(html, selector)
+            // html_query(html BLOB)
+            ScalarFunctionSignature::exact(
+                vec![LogicalTypeHandle::from(LogicalTypeId::Blob)],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_query(html VARCHAR, selector)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -205,7 +210,15 @@ impl VScalar for HtmlQueryFunction {
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-            // html_query(html, selector, extract)
+            // html_query(html BLOB, selector)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_query(html VARCHAR, selector, extract)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -214,10 +227,28 @@ impl VScalar for HtmlQueryFunction {
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-            // html_query(html, selector, extract[])
+            // html_query(html BLOB, selector, extract)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_query(html VARCHAR, selector, extract[])
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_query(html BLOB, selector, extract[])
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
                 ],
@@ -387,12 +418,17 @@ impl VScalar for HtmlQueryAllFunction {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![
-            // html_query_all(html)
+            // html_query_all(html VARCHAR)
             ScalarFunctionSignature::exact(
                 vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
                 LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),
-            // html_query_all(html, selector)
+            // html_query_all(html BLOB)
+            ScalarFunctionSignature::exact(
+                vec![LogicalTypeHandle::from(LogicalTypeId::Blob)],
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+            ),
+            // html_query_all(html VARCHAR, selector)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -400,7 +436,15 @@ impl VScalar for HtmlQueryAllFunction {
                 ],
                 LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),
-            // html_query_all(html, selector, extract)
+            // html_query_all(html BLOB, selector)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+            ),
+            // html_query_all(html VARCHAR, selector, extract)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -409,10 +453,28 @@ impl VScalar for HtmlQueryAllFunction {
                 ],
                 LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
             ),
-            // html_query_all(html, selector, extract[])
+            // html_query_all(html BLOB, selector, extract)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+            ),
+            // html_query_all(html VARCHAR, selector, extract[])
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+                ],
+                LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
+            ),
+            // html_query_all(html BLOB, selector, extract[])
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::list(&LogicalTypeHandle::from(LogicalTypeId::Varchar)),
                 ],
@@ -604,7 +666,7 @@ impl VScalar for HtmlExtractJsonFunction {
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![
-            // html_extract_json(html, selector)
+            // html_extract_json(html VARCHAR, selector)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
@@ -612,10 +674,27 @@ impl VScalar for HtmlExtractJsonFunction {
                 ],
                 LogicalTypeHandle::from(LogicalTypeId::Varchar),
             ),
-            // html_extract_json(html, selector, var_pattern)
+            // html_extract_json(html BLOB, selector)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_extract_json(html VARCHAR, selector, var_pattern)
             ScalarFunctionSignature::exact(
                 vec![
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            // html_extract_json(html BLOB, selector, var_pattern)
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Blob),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                     LogicalTypeHandle::from(LogicalTypeId::Varchar),
                 ],
