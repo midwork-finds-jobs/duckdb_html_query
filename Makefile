@@ -8,7 +8,7 @@ EXTENSION_NAME=html_query
 USE_UNSTABLE_C_API=1
 
 # Target DuckDB version
-TARGET_DUCKDB_VERSION=v1.4.2
+TARGET_DUCKDB_VERSION=v1.4.3
 
 # Build with duckdb feature for extension
 CARGO_FEATURES=--features duckdb --no-default-features
