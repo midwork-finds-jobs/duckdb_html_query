@@ -615,18 +615,39 @@ impl VScalar for HtmlExtractJsonFunction {
             };
 
             let result = if let Some(var_pattern) = &var_patterns[i] {
-                // Mode 2: Extract JS variable - always return array
-                match js_decode::extract_js_variable(&script_content, var_pattern) {
-                    Ok(js_value) => {
-                        if let Ok(parsed) =
-                            serde_json::from_str::<serde_json::Value>(&js_value.to_json_string())
-                        {
-                            serde_json::to_string(&vec![parsed]).ok()
-                        } else {
-                            None
+                if let Some(json_key) = var_pattern.strip_prefix("@nextjs_rsc:") {
+                    // Mode 3: Extract Next.js RSC data - search all scripts for JSON with key
+                    match extract_all_text(&html, "script") {
+                        Ok(scripts) => {
+                            let mut all_results: Vec<serde_json::Value> = Vec::new();
+                            for script in &scripts {
+                                if let Ok(matches) = js_decode::extract_nextjs_rsc(script, json_key)
+                                {
+                                    all_results.extend(matches);
+                                }
+                            }
+                            if all_results.is_empty() {
+                                None
+                            } else {
+                                serde_json::to_string(&all_results).ok()
+                            }
                         }
+                        Err(_) => None,
                     }
-                    Err(_) => None,
+                } else {
+                    // Mode 2: Extract JS variable - always return array
+                    match js_decode::extract_js_variable(&script_content, var_pattern) {
+                        Ok(js_value) => {
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
+                                &js_value.to_json_string(),
+                            ) {
+                                serde_json::to_string(&vec![parsed]).ok()
+                            } else {
+                                None
+                            }
+                        }
+                        Err(_) => None,
+                    }
                 }
             } else {
                 // Mode 1: Direct JSON (for ld+json scripts) - always return array

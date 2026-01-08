@@ -184,6 +184,30 @@ SELECT html_extract_json('<html><script type="application/ld+json">{"name":"Test
 ----
 [{"name":"Test"}]
 
+# Test Next.js RSC extraction with @nextjs_rsc: pattern
+query I
+SELECT html_extract_json('<html><script>self.__next_f.push([1,''1d:[["$","div",null,{"productDisplay":{"id":"123","name":"Widget"}}]]\n'']);</script></html>', 'script', '@nextjs_rsc:productDisplay');
+----
+[{"productDisplay":{"id":"123","name":"Widget"}}]
+
+# Test Next.js RSC extraction returns array
+query I
+SELECT json_extract_string(html_extract_json('<html><script>self.__next_f.push([1,''ab:[{"market":"US","productDisplay":{"type":"default"}}]\n'']);</script></html>', 'script', '@nextjs_rsc:productDisplay'), '$[0].productDisplay.type');
+----
+default
+
+# Test Next.js RSC extraction with multiple matches
+query I
+SELECT json_array_length(html_extract_json('<html><script>self.__next_f.push([1,''1:[{"productDisplay":{"id":"1"}}]\n'']);</script><script>self.__next_f.push([1,''2:[{"productDisplay":{"id":"2"}}]\n'']);</script></html>', 'script', '@nextjs_rsc:productDisplay'));
+----
+2
+
+# Test Next.js RSC extraction with no match returns NULL
+query I
+SELECT html_extract_json('<html><script>var x = 1;</script></html>', 'script', '@nextjs_rsc:productDisplay');
+----
+NULL
+
 # Cleanup
 statement ok
 DROP TABLE pages;

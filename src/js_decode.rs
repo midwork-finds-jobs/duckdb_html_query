@@ -339,6 +339,160 @@ pub fn decode_js_string(input: &str) -> Result<String, Box<dyn Error>> {
     Ok(result)
 }
 
+/// Extract JSON objects from Next.js RSC (React Server Components) payloads
+///
+/// Next.js uses `self.__next_f.push([1, 'PREFIX:JSON_CONTENT\n'])` format.
+/// This function finds JSON objects containing a specific key.
+/// Handles both single-quoted strings and double-quoted strings with escaped quotes.
+///
+/// # Arguments
+/// * `script_content` - The script text content
+/// * `json_key` - The key to search for (e.g., "productDisplay")
+///
+/// # Returns
+/// A vector of JSON values that contain the specified key
+pub fn extract_nextjs_rsc(
+    script_content: &str,
+    json_key: &str,
+) -> Result<Vec<serde_json::Value>, Box<dyn Error>> {
+    let mut results = Vec::new();
+
+    // Try both escaped and unescaped patterns
+    // Escaped: \"productDisplay\": (in double-quoted JS strings)
+    // Unescaped: "productDisplay": (in single-quoted JS strings)
+    let patterns = [
+        (format!("\\\"{}\\\":", json_key), true), // escaped quotes
+        (format!("\"{}\":", json_key), false),    // unescaped quotes
+    ];
+
+    for (pattern, is_escaped) in &patterns {
+        let mut search_start = 0;
+        while let Some(key_pos) = script_content[search_start..].find(pattern) {
+            let abs_pos = search_start + key_pos;
+
+            // Find the start of the enclosing JSON object (always plain { brace)
+            let before = &script_content[..abs_pos];
+            if let Some(obj_start) = find_object_start_plain(before) {
+                let remaining = &script_content[obj_start..];
+                if let Some(json_str) =
+                    extract_balanced_json_with_escaped_strings(remaining, *is_escaped)
+                {
+                    // Unescape quotes if needed
+                    let unescaped = if *is_escaped {
+                        json_str.replace("\\\"", "\"")
+                    } else {
+                        json_str.clone()
+                    };
+
+                    let decoded = match decode_js_string(&unescaped) {
+                        Ok(d) => d,
+                        Err(_) => unescaped.clone(),
+                    };
+
+                    // Try to parse as JSON
+                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&decoded) {
+                        if json_val.get(json_key).is_some() {
+                            results.push(json_val);
+                        }
+                    } else {
+                        let fixed = super::escape_json_control_chars(&decoded);
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&fixed) {
+                            if json_val.get(json_key).is_some() {
+                                results.push(json_val);
+                            }
+                        }
+                    }
+                }
+            }
+
+            search_start = abs_pos + pattern.len();
+        }
+    }
+
+    Ok(results)
+}
+
+/// Find the start position of a JSON object by walking backwards (plain braces)
+fn find_object_start_plain(text: &str) -> Option<usize> {
+    let mut depth = 0;
+    let chars: Vec<char> = text.chars().collect();
+
+    for i in (0..chars.len()).rev() {
+        match chars[i] {
+            '}' => depth += 1,
+            '{' => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract a balanced JSON object/array with support for escaped string quotes
+/// escaped_strings: if true, strings are delimited by \" instead of "
+fn extract_balanced_json_with_escaped_strings(text: &str, escaped_strings: bool) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || (bytes[0] != b'{' && bytes[0] != b'[') {
+        return None;
+    }
+
+    let (open, close) = if bytes[0] == b'{' {
+        (b'{', b'}')
+    } else {
+        (b'[', b']')
+    };
+    let mut depth = 1;
+    let mut i = 1;
+    let mut in_string = false;
+
+    while i < bytes.len() && depth > 0 {
+        if escaped_strings {
+            // Handle escaped strings: \" marks string boundaries
+            if i + 1 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'"' {
+                in_string = !in_string;
+                i += 2;
+                continue;
+            }
+            // Skip escaped backslash in strings
+            if in_string && i + 1 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'\\' {
+                i += 2;
+                continue;
+            }
+        } else {
+            // Handle normal strings: " marks string boundaries
+            if bytes[i] == b'"' && (i == 0 || bytes[i - 1] != b'\\') {
+                in_string = !in_string;
+                i += 1;
+                continue;
+            }
+            // Skip escaped characters in strings
+            if in_string && bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+        }
+
+        if !in_string {
+            if bytes[i] == open {
+                depth += 1;
+            } else if bytes[i] == close {
+                depth -= 1;
+            }
+        }
+        i += 1;
+    }
+
+    if depth == 0 {
+        Some(String::from_utf8_lossy(&bytes[..i]).to_string())
+    } else {
+        None
+    }
+}
+
 /// Attempt to fix UTF-8 mojibake (text encoded as UTF-8 but interpreted as Latin-1)
 pub fn fix_mojibake(input: &str) -> String {
     // Try to re-encode as latin-1, then decode as UTF-8
@@ -642,5 +796,52 @@ mod tests {
 
         let raw_val = JsValue::Raw("hello".to_string());
         assert_eq!(raw_val.to_json_string(), r#""hello""#);
+    }
+
+    // ==================== extract_nextjs_rsc tests ====================
+
+    #[test]
+    fn test_nextjs_rsc_simple() {
+        let script =
+            r#"self.__next_f.push([1,'1d:[["$","div",null,{"productDisplay":{"id":"123"}}]]\n']);"#;
+        let result = extract_nextjs_rsc(script, "productDisplay").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["productDisplay"]["id"], "123");
+    }
+
+    #[test]
+    fn test_nextjs_rsc_nested_object() {
+        let script = r#"self.__next_f.push([1,'ab:[{"market":"US","productDisplay":{"type":"default","settings":{"enabled":true}}}]\n']);"#;
+        let result = extract_nextjs_rsc(script, "productDisplay").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["productDisplay"]["type"], "default");
+        assert_eq!(result[0]["productDisplay"]["settings"]["enabled"], true);
+    }
+
+    #[test]
+    fn test_nextjs_rsc_multiple_matches() {
+        let script = r#"
+            self.__next_f.push([1,'1:[{"productDisplay":{"id":"1"}}]\n']);
+            self.__next_f.push([1,'2:[{"productDisplay":{"id":"2"}}]\n']);
+        "#;
+        let result = extract_nextjs_rsc(script, "productDisplay").unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["productDisplay"]["id"], "1");
+        assert_eq!(result[1]["productDisplay"]["id"], "2");
+    }
+
+    #[test]
+    fn test_nextjs_rsc_no_match() {
+        let script = r#"var x = {"other": "data"};"#;
+        let result = extract_nextjs_rsc(script, "productDisplay").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_nextjs_rsc_with_unicode() {
+        let script = r#"self.__next_f.push([1,'x:[{"productDisplay":{"name":"Café"}}]\n']);"#;
+        let result = extract_nextjs_rsc(script, "productDisplay").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["productDisplay"]["name"], "Café");
     }
 }
