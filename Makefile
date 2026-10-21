@@ -4,11 +4,15 @@ PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 EXTENSION_NAME=html_query
 
-# Set to 1 to enable Unstable API
-USE_UNSTABLE_C_API=1
+# Stable V1 C API (C_STRUCT): loads on DuckDB >= TARGET_DUCKDB_VERSION incl. v2.0.x.
+# Unstable API would require the v2 entrypoint (_init_c_api_v2), which duckdb-rs classic API does not emit.
+USE_UNSTABLE_C_API=0
 
-# Target DuckDB version
-TARGET_DUCKDB_VERSION=v1.4.3
+# Target DuckDB V1 C API version
+TARGET_DUCKDB_VERSION=v1.5.6
+
+# DuckDB version used by the python test runner
+DUCKDB_TEST_VERSION=2.0.0
 
 # Build with duckdb feature for extension
 CARGO_FEATURES=--features duckdb --no-default-features
@@ -41,3 +45,11 @@ build_extension_library_release: check_configure
 	DUCKDB_EXTENSION_NAME=$(EXTENSION_NAME) DUCKDB_EXTENSION_MIN_DUCKDB_VERSION=$(TARGET_DUCKDB_VERSION) cargo build $(CARGO_OVERRIDE_DUCKDB_RS_FLAG) --release $(TARGET_INFO) $(CARGO_FEATURES)
 	$(PYTHON_VENV_BIN) -c "from pathlib import Path;Path('$(EXTENSION_BUILD_PATH)/release/extension/$(EXTENSION_NAME)').mkdir(parents=True, exist_ok=True)"
 	$(PYTHON_VENV_BIN) -c "import shutil;shutil.copyfile('$(TARGET_PATH)/release$(IS_EXAMPLE)/$(RUST_LIBNAME)', '$(EXTENSION_BUILD_PATH)/release/$(EXTENSION_LIB_FILENAME)')"
+
+# Code quality checks (called by extension-ci-tools _extension_code_quality.yml)
+.PHONY: format-check tidy-check
+format-check:
+	cargo fmt --all -- --check
+
+tidy-check:
+	cargo clippy --all-targets $(CARGO_FEATURES) -- -D warnings

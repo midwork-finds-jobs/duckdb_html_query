@@ -7,7 +7,6 @@ use crate::{
 };
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
-    ffi,
     types::DuckString,
     vscalar::{ScalarFunctionSignature, VScalar},
     vtab::arrow::WritableVector,
@@ -22,7 +21,7 @@ use std::error::Error;
 
 /// Read a list of strings from a list vector at given row index
 unsafe fn read_string_list(
-    input: &mut DataChunkHandle,
+    input: &DataChunkHandle,
     col_idx: usize,
     row_idx: usize,
     chunk_size: usize,
@@ -84,7 +83,7 @@ struct HtmlQueryFunction;
 impl VScalar for HtmlQueryFunction {
     type State = ();
 
-    unsafe fn invoke(
+    fn invoke(
         _state: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -93,7 +92,7 @@ impl VScalar for HtmlQueryFunction {
         let html_vector = input.flat_vector(0);
         let mut output_vector = output.flat_vector();
 
-        let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
+        let html_values = unsafe { html_vector.as_slice_with_len::<duckdb_string_t>(size) };
         let html_contents: Vec<String> = html_values
             .iter()
             .map(|ptr| DuckString::new(&mut { *ptr }).as_str().to_string())
@@ -102,7 +101,8 @@ impl VScalar for HtmlQueryFunction {
         // Get selector (optional, column 1)
         let selectors: Vec<Option<String>> = if input.num_columns() > 1 {
             let selector_vector = input.flat_vector(1);
-            let selector_values = selector_vector.as_slice_with_len::<duckdb_string_t>(size);
+            let selector_values =
+                unsafe { selector_vector.as_slice_with_len::<duckdb_string_t>(size) };
             (0..size)
                 .map(|i| {
                     if selector_vector.row_is_null(i as u64) {
@@ -133,7 +133,7 @@ impl VScalar for HtmlQueryFunction {
                         if list_entries_vector.row_is_null(i as u64) {
                             ExtractMode::Html
                         } else {
-                            let attrs = read_string_list(input, 2, i, size);
+                            let attrs = unsafe { read_string_list(&*input, 2, i, size) };
                             ExtractMode::from_attr_list(&attrs)
                         }
                     })
@@ -141,7 +141,8 @@ impl VScalar for HtmlQueryFunction {
             } else {
                 // VARCHAR - single attribute mode
                 let extract_vector = input.flat_vector(2);
-                let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
+                let extract_values =
+                    unsafe { extract_vector.as_slice_with_len::<duckdb_string_t>(size) };
                 (0..size)
                     .map(|i| {
                         if extract_vector.row_is_null(i as u64) {
@@ -287,7 +288,7 @@ struct HtmlQueryAllFunction;
 impl VScalar for HtmlQueryAllFunction {
     type State = ();
 
-    unsafe fn invoke(
+    fn invoke(
         _state: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -295,7 +296,7 @@ impl VScalar for HtmlQueryAllFunction {
         let size = input.len();
         let html_vector = input.flat_vector(0);
 
-        let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
+        let html_values = unsafe { html_vector.as_slice_with_len::<duckdb_string_t>(size) };
         let html_contents: Vec<String> = html_values
             .iter()
             .map(|ptr| DuckString::new(&mut { *ptr }).as_str().to_string())
@@ -304,7 +305,8 @@ impl VScalar for HtmlQueryAllFunction {
         // Get selector (optional, column 1)
         let selectors: Vec<Option<String>> = if input.num_columns() > 1 {
             let selector_vector = input.flat_vector(1);
-            let selector_values = selector_vector.as_slice_with_len::<duckdb_string_t>(size);
+            let selector_values =
+                unsafe { selector_vector.as_slice_with_len::<duckdb_string_t>(size) };
             (0..size)
                 .map(|i| {
                     if selector_vector.row_is_null(i as u64) {
@@ -335,7 +337,7 @@ impl VScalar for HtmlQueryAllFunction {
                         if list_entries_vector.row_is_null(i as u64) {
                             ExtractMode::Html
                         } else {
-                            let attrs = read_string_list(input, 2, i, size);
+                            let attrs = unsafe { read_string_list(&*input, 2, i, size) };
                             ExtractMode::from_attr_list(&attrs)
                         }
                     })
@@ -343,7 +345,8 @@ impl VScalar for HtmlQueryAllFunction {
             } else {
                 // VARCHAR - single attribute mode
                 let extract_vector = input.flat_vector(2);
-                let extract_values = extract_vector.as_slice_with_len::<duckdb_string_t>(size);
+                let extract_values =
+                    unsafe { extract_vector.as_slice_with_len::<duckdb_string_t>(size) };
                 (0..size)
                     .map(|i| {
                         if extract_vector.row_is_null(i as u64) {
@@ -555,7 +558,7 @@ struct HtmlExtractJsonFunction;
 impl VScalar for HtmlExtractJsonFunction {
     type State = ();
 
-    unsafe fn invoke(
+    fn invoke(
         _state: &Self::State,
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
@@ -565,13 +568,13 @@ impl VScalar for HtmlExtractJsonFunction {
         let selector_vector = input.flat_vector(1);
         let mut output_vector = output.flat_vector();
 
-        let html_values = html_vector.as_slice_with_len::<duckdb_string_t>(size);
-        let selector_values = selector_vector.as_slice_with_len::<duckdb_string_t>(size);
+        let html_values = unsafe { html_vector.as_slice_with_len::<duckdb_string_t>(size) };
+        let selector_values = unsafe { selector_vector.as_slice_with_len::<duckdb_string_t>(size) };
 
         // Get optional var_pattern (column 2)
         let var_patterns: Vec<Option<String>> = if input.num_columns() > 2 {
             let var_vector = input.flat_vector(2);
-            let var_values = var_vector.as_slice_with_len::<duckdb_string_t>(size);
+            let var_values = unsafe { var_vector.as_slice_with_len::<duckdb_string_t>(size) };
             (0..size)
                 .map(|i| {
                     if var_vector.row_is_null(i as u64) {
