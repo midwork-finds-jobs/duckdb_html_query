@@ -27,9 +27,9 @@ htmlescape = "0.3"
 lazy_static = "1.4.0"
 
 # DuckDB extension dependencies
-duckdb = { version = "1.4.2", features = ["vtab-loadable", "vscalar"], optional = true }
-duckdb-loadable-macros = { version = "0.1.12", optional = true }
-libduckdb-sys = { version = "1.4.2", features = ["loadable-extension"], optional = true }
+duckdb = { version = "1.10506.1", features = ["vtab-loadable", "vscalar"], optional = true }
+duckdb-loadable-macros = { version = "1.10506.1", optional = true }
+libduckdb-sys = { version = "1.10506.1", features = ["loadable-extension"], optional = true }
 
 [features]
 default = []
