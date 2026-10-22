@@ -19,8 +19,8 @@ lto = true
 strip = true
 
 [dependencies]
-kuchikiki = "0.8"
-html5ever = "0.26.0"
+kuchikiki = "=0.8.9-speedreader"
+html5ever = "0.35"
 url = "2.2.2"
 serde_json = "1"
 htmlescape = "0.3"
