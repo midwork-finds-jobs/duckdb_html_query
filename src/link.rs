@@ -92,6 +92,7 @@ mod tests {
             .from_utf8()
             .read_from(&mut html.as_bytes())
             .unwrap()
+            .document_node
     }
 
     fn serialize_doc(doc: &NodeRef) -> String {

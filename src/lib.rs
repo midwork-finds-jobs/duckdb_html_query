@@ -71,7 +71,7 @@ fn serialize_text(node: &NodeRef, ignore_whitespace: bool) -> String {
 
 /// Extract text content from all elements matching selector, returning each separately
 pub fn extract_all_text(html: &str, selector: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let document = kuchikiki::parse_html().one(html);
+    let document = kuchikiki::parse_html().one(html).document_node;
     let mut results = Vec::new();
 
     for node in document
@@ -159,7 +159,7 @@ pub fn extract_all_with_mode(
     selector: &str,
     mode: &ExtractMode,
 ) -> Result<Vec<String>, Box<dyn Error>> {
-    let document = kuchikiki::parse_html().one(html);
+    let document = kuchikiki::parse_html().one(html).document_node;
     let mut results = Vec::new();
 
     for node in document
@@ -208,7 +208,7 @@ pub fn extract_all_with_mode(
 }
 
 pub fn process_html(html: &str, config: &HqConfig) -> Result<String, Box<dyn Error>> {
-    let document = kuchikiki::parse_html().one(html);
+    let document = kuchikiki::parse_html().one(html).document_node;
 
     let base: Option<Url> = match (&config.base, &config.detect_base) {
         (Some(base), true) => link::detect_base(&document).or(Url::parse(base).ok()),
@@ -251,7 +251,7 @@ pub fn process_html(html: &str, config: &HqConfig) -> Result<String, Box<dyn Err
             continue;
         }
 
-        writeln!(output, "{}", node.to_string()).ok();
+        writeln!(output, "{}", node).ok();
     }
 
     let mut result = String::from_utf8(output)?;
